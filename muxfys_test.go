@@ -92,7 +92,6 @@ func TestMuxFys(t *testing.T) {
 			Mount:   mountPoint,
 			Retries: 3,
 			Verbose: false,
-			Targets: []*Target{targetManual},
 		}
 
 		Convey("You can configure targets from the environment", t, func() {
@@ -132,7 +131,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -278,7 +277,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -357,7 +356,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -464,7 +463,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -512,9 +511,10 @@ func TestMuxFys(t *testing.T) {
 
 				// remounting lets us read the file again - it actually got
 				// uploaded
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
+				cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 				_, err = os.Stat(cachePath)
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)
@@ -549,7 +549,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -575,9 +575,10 @@ func TestMuxFys(t *testing.T) {
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
 
-						err = fs.Mount()
+						err = fs.Mount(targetManual)
 						So(err, ShouldBeNil)
 
+						cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 						stat, err = os.Stat(cachePath)
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
@@ -620,9 +621,10 @@ func TestMuxFys(t *testing.T) {
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
 
-						err = fs.Mount()
+						err = fs.Mount(targetManual)
 						So(err, ShouldBeNil)
 
+						cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 						stat, err = os.Stat(cachePath)
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
@@ -653,10 +655,10 @@ func TestMuxFys(t *testing.T) {
 						So(err, ShouldBeNil)
 						So(string(bytes), ShouldEqual, line)
 
+						cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 						err = fs.Unmount()
 						So(err, ShouldBeNil)
 
-						cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 						_, err = os.Stat(cachePath)
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
@@ -664,7 +666,7 @@ func TestMuxFys(t *testing.T) {
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
 
-						err = fs.Mount()
+						err = fs.Mount(targetManual)
 						So(err, ShouldBeNil)
 
 						bytes, err = ioutil.ReadFile(path)
@@ -691,7 +693,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					defer func() {
@@ -714,7 +716,7 @@ func TestMuxFys(t *testing.T) {
 					// unmount first to clear the cache
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					dest := mountPoint + "/write.moved"
@@ -736,7 +738,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					defer func() {
@@ -787,7 +789,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					defer func() {
@@ -871,7 +873,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -920,7 +922,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldBeNil)
 				}()
 
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
 				Convey("You can't write to a file you open RDONLY", func() {
@@ -944,10 +946,10 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(string(bytes), ShouldEqual, string(b)+line2)
 
+					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
 
-					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 					_, err = os.Stat(cachePath)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
@@ -955,7 +957,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -974,7 +976,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					bytes, err := ioutil.ReadFile(path)
@@ -999,7 +1001,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					// now do a partial read
@@ -1030,7 +1032,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					// check it worked correctly
@@ -1078,7 +1080,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					stat, err = os.Stat(cachePath)
@@ -1111,7 +1113,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					stat, err = os.Stat(cachePath)
@@ -1145,7 +1147,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					stat, err = os.Stat(cachePath)
@@ -1175,10 +1177,10 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(string(bytes), ShouldEqual, line)
 
+					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
 
-					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 					_, err = os.Stat(cachePath)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
@@ -1186,7 +1188,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -1210,10 +1212,10 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(string(bytes), ShouldEqual, line)
 
+					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
 
-					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 					_, err = os.Stat(cachePath)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
@@ -1221,7 +1223,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -1377,7 +1379,7 @@ func TestMuxFys(t *testing.T) {
 
 				// remounting lets us read the file again - it actually got
 				// uploaded
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
 				bytes, err = ioutil.ReadFile(path)
@@ -1422,7 +1424,7 @@ func TestMuxFys(t *testing.T) {
 
 				// remounting lets us read the file again - it actually got
 				// uploaded
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
 				bytes, err = ioutil.ReadFile(path)
@@ -1515,7 +1517,7 @@ func TestMuxFys(t *testing.T) {
 					os.Remove(path3)
 				}()
 
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
 				info1, err := os.Stat(path1)
@@ -1559,7 +1561,7 @@ func TestMuxFys(t *testing.T) {
 				Convey("But they're not uploaded", func() {
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount()
+					err = fs.Mount(targetManual)
 					So(err, ShouldBeNil)
 
 					_, err = os.Stat(dest)
@@ -1580,7 +1582,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1634,7 +1636,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -1709,7 +1711,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -1766,7 +1768,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1800,7 +1802,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1834,7 +1836,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1854,7 +1856,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1874,7 +1876,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1904,7 +1906,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1938,7 +1940,7 @@ func TestMuxFys(t *testing.T) {
 			So(os.IsNotExist(err), ShouldBeTrue)
 
 			// remounting reveals it did not get uploaded
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			_, err = os.Stat(cachePath)
@@ -1959,7 +1961,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			_, err = ioutil.ReadDir(mountPoint)
@@ -1994,7 +1996,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -2198,13 +2200,12 @@ func TestMuxFys(t *testing.T) {
 				Mount:   mountPoint,
 				Retries: 3,
 				Verbose: false,
-				Targets: []*Target{targetManual, targetManual2},
 			}
 
 			fs, err := New(cfgMultiplex)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual, targetManual2)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -2307,7 +2308,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount()
+			err = fs.Mount(targetManual)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -2324,7 +2325,7 @@ func TestMuxFys(t *testing.T) {
 			})
 
 			Convey("You can't mount more than once at a time", func() {
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldNotBeNil)
 			})
 		})
@@ -2335,7 +2336,7 @@ func TestMuxFys(t *testing.T) {
 				fs, err := New(cfg)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
 				defer func() {
@@ -2370,7 +2371,7 @@ func TestMuxFys(t *testing.T) {
 				fs, err := New(cfg)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
 				defer func() {
@@ -2412,13 +2413,12 @@ func TestMuxFys(t *testing.T) {
 					Mount:   mountPoint,
 					Retries: 3,
 					Verbose: false,
-					Targets: []*Target{targetManual, targetManual2},
 				}
 
 				fs, err := New(cfgMultiplex)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount()
+				err = fs.Mount(targetManual, targetManual2)
 				So(err, ShouldBeNil)
 
 				defer func() {
@@ -2450,7 +2450,7 @@ func TestMuxFys(t *testing.T) {
 				fs, err := New(cfg)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount()
+				err = fs.Mount(targetManual)
 				So(err, ShouldBeNil)
 
 				defer func() {

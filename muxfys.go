@@ -69,11 +69,10 @@ S3 buckets.
     target2.ReadEnvironment("default", "myotherbucket/another/subdir")
 
     cfg := &muxfys.Config{
-        Mount: "/tmp/muxfys/mount",
+        Mount:     "/tmp/muxfys/mount",
         CacheBase: "/tmp",
-        Retries:    3,
-        Verbose:    true,
-        Targets:    []*muxfys.Target{target, target2},
+        Retries:   3,
+        Verbose:   true,
     }
 
     fs, err := muxfys.New(cfg)
@@ -81,7 +80,7 @@ S3 buckets.
         log.Fatalf("bad configuration: %s\n", err)
     }
 
-    err = fs.Mount()
+    err = fs.Mount(target, target2)
     if err != nil {
         log.Fatalf("could not mount: %s\n", err)
     }
@@ -153,7 +152,7 @@ type Config struct {
 	// empty.
 	Mount string
 
-	// Retries is the number of times to automatically retry failed remote S3
+	// Retries is the number of times to automatically retry failed remote
 	// system requests. The default of 0 means don't retry; at least 3 is
 	// recommended.
 	Retries int
@@ -166,11 +165,6 @@ type Config struct {
 	// Verbose results in every remote request getting an entry in the output of
 	// Logs(). Errors always appear there.
 	Verbose bool
-
-	// Targets is a slice of Target, describing what you want to mount and
-	// allowing you to multiplex more than one bucket/ sub directory on to
-	// Mount. Only 1 of these Target can be writeable.
-	Targets []*Target
 }
 
 // Target struct provides details of the remote target (S3 bucket) you wish to
@@ -441,6 +435,7 @@ func (t *Target) CreateRemote(cacheBase string, maxAttempts int, logger log15.Lo
 type MuxFys struct {
 	pathfs.FileSystem
 	mountPoint      string
+	cacheBase       string
 	dirAttr         *fuse.Attr
 	server          *fuse.Server
 	mutex           sync.Mutex
@@ -456,6 +451,7 @@ type MuxFys struct {
 	ignoreSignals   chan bool
 	remotes         []*remote
 	writeRemote     *remote
+	maxAttempts     int
 	logStore        *l15h.Store
 	log15.Logger
 }
@@ -465,10 +461,6 @@ type MuxFys struct {
 // done. You might check Logs() afterwards. The other methods of MuxFys can be
 // ignored in most cases.
 func New(config *Config) (fs *MuxFys, err error) {
-	if len(config.Targets) == 0 {
-		return nil, fmt.Errorf("no targets provided")
-	}
-
 	mountPoint := config.Mount
 	if mountPoint == "" {
 		mountPoint = "mnt"
@@ -520,31 +512,16 @@ func New(config *Config) (fs *MuxFys, err error) {
 	fs = &MuxFys{
 		FileSystem:   pathfs.NewDefaultFileSystem(),
 		mountPoint:   mountPoint,
+		cacheBase:    cacheBase,
 		dirs:         make(map[string][]*remote),
 		dirContents:  make(map[string][]fuse.DirEntry),
 		files:        make(map[string]*fuse.Attr),
 		fileToRemote: make(map[string]*remote),
 		createdFiles: make(map[string]bool),
 		createdDirs:  make(map[string]bool),
+		maxAttempts:  config.Retries + 1,
 		logStore:     store,
 		Logger:       logger,
-	}
-
-	// create a remote for every Target
-	for _, t := range config.Targets {
-		var r *remote
-		r, err = t.CreateRemote(cacheBase, config.Retries+1, logger)
-		if err != nil {
-			return
-		}
-
-		fs.remotes = append(fs.remotes, r)
-		if r.write {
-			if fs.writeRemote != nil {
-				return nil, fmt.Errorf("you can't have more than one writeable target")
-			}
-			fs.writeRemote = r
-		}
 	}
 
 	// cheats for s3-like filesystems
@@ -560,15 +537,43 @@ func New(config *Config) (fs *MuxFys, err error) {
 	return
 }
 
-// Mount carries out the mounting of your configured S3 bucket to your
-// configured mount point. On return, the files in your bucket will be
-// accessible. Once mounted, you can't mount again until you Unmount().
-func (fs *MuxFys) Mount() (err error) {
+// Mount carries out the mounting of your supplied targets to your configured
+// mount point. On return, the files in your target(s) will be accessible. Once
+// mounted, you can't mount again until you Unmount(). If more than 1 target is
+// supplied, they will become multiplexed: your mount point will show the
+// combined contents of all your targets. If multiple targets have a directory
+// with the same name, that directory's contents will in in turn show the
+// contents of all those directories. If multiple targets have a file with the
+// same name in the same directory, reads will come from first target you supply
+// that has that file.
+func (fs *MuxFys) Mount(targets ...*Target) (err error) {
+	if len(targets) == 0 {
+		err = fmt.Errorf("At least one Target must be supplied")
+		return
+	}
+
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 	if fs.mounted {
-		err = fmt.Errorf("Can't mount more that once at a time\n")
+		err = fmt.Errorf("Can't mount more that once at a time")
 		return
+	}
+
+	// create a remote for every Target
+	for _, t := range targets {
+		var r *remote
+		r, err = t.CreateRemote(fs.cacheBase, fs.maxAttempts, fs.Logger)
+		if err != nil {
+			return
+		}
+
+		fs.remotes = append(fs.remotes, r)
+		if r.write {
+			if fs.writeRemote != nil {
+				return fmt.Errorf("You can't have more than one writeable target")
+			}
+			fs.writeRemote = r
+		}
 	}
 
 	uid, gid, err := userAndGroup()
@@ -721,6 +726,10 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 	fs.fileToRemote = make(map[string]*remote)
 	fs.createdFiles = make(map[string]bool)
 	fs.createdDirs = make(map[string]bool)
+
+	// forget our remotes so we can be remounted with other remotes
+	fs.remotes = nil
+	fs.writeRemote = nil
 
 	return
 }
