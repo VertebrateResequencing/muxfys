@@ -1,0 +1,9 @@
+language: go
+sudo: false
+go:
+  - master
+before_install:
+  - go get github.com/mattn/goveralls
+script:
+  - go test -v -coverprofile=muxfys.coverprofile -covermode count .
+  - $HOME/gopath/bin/goveralls -coverprofile=muxfys.coverprofile -service travis-ci
