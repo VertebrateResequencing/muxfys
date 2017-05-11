@@ -178,54 +178,56 @@ that muxfys can coordinate the cache amongst independent processes.)
 
 # Usage
 
-    import "github.com/VertebrateResequencing/wr/muxfys"
+```go
+import "github.com/VertebrateResequencing/wr/muxfys"
 
-    // fully manual target configuration
-    target1 := &muxfys.Target{
-        Target:     "https://s3.amazonaws.com/mybucket/subdir",
-        Region:     "us-east-1",
-        AccessKey:  os.Getenv("AWS_ACCESS_KEY_ID"),
-        SecretKey:  os.Getenv("AWS_SECRET_ACCESS_KEY"),
-        CacheDir:   "/tmp/muxfys/cache",
-        Write:      true,
-    }
+// fully manual target configuration
+target1 := &muxfys.Target{
+    Target:     "https://s3.amazonaws.com/mybucket/subdir",
+    Region:     "us-east-1",
+    AccessKey:  os.Getenv("AWS_ACCESS_KEY_ID"),
+    SecretKey:  os.Getenv("AWS_SECRET_ACCESS_KEY"),
+    CacheDir:   "/tmp/muxfys/cache",
+    Write:      true,
+}
 
-    // or read some configuration from standard AWS S3 config files and
-    // environment variables
-    target2 := &muxfys.Target{
-        CacheData: true,
-    }
-    target2.ReadEnvironment("default", "myotherbucket/another/subdir")
+// or read some configuration from standard AWS S3 config files and
+// environment variables
+target2 := &muxfys.Target{
+    CacheData: true,
+}
+target2.ReadEnvironment("default", "myotherbucket/another/subdir")
 
-    cfg := &muxfys.Config{
-        Mount: "/tmp/muxfys/mount",
-        CacheBase: "/tmp",
-        Retries:    3,
-        Verbose:    true,
-        Targets:    []*muxfys.Target{target, target2},
-    }
+cfg := &muxfys.Config{
+    Mount: "/tmp/muxfys/mount",
+    CacheBase: "/tmp",
+    Retries:    3,
+    Verbose:    true,
+    Targets:    []*muxfys.Target{target, target2},
+}
 
-    fs, err := muxfys.New(cfg)
-    if err != nil {
-        log.Fatalf("bad configuration: %s\n", err)
-    }
+fs, err := muxfys.New(cfg)
+if err != nil {
+    log.Fatalf("bad configuration: %s\n", err)
+}
 
-    err = fs.Mount()
-    if err != nil {
-        log.Fatalf("could not mount: %s\n", err)
-    }
-    fs.UnmountOnDeath()
+err = fs.Mount()
+if err != nil {
+    log.Fatalf("could not mount: %s\n", err)
+}
+fs.UnmountOnDeath()
 
-    // read from & write to files in /tmp/muxfys/mount, which contains the
-    // contents of mybucket/subdir and myotherbucket/another/subdir; writes will
-    // get uploaded to mybucket/subdir when you Unmount()
+// read from & write to files in /tmp/muxfys/mount, which contains the
+// contents of mybucket/subdir and myotherbucket/another/subdir; writes will
+// get uploaded to mybucket/subdir when you Unmount()
 
-    err = fs.Unmount()
-    if err != nil {
-        log.Fatalf("could not unmount: %s\n", err)
-    }
+err = fs.Unmount()
+if err != nil {
+    log.Fatalf("could not unmount: %s\n", err)
+}
 
-    logs := fs.Logs()
+logs := fs.Logs()
+```
 
 # Provenance
 
