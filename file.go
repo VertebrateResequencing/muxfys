@@ -205,7 +205,7 @@ func (f *CachedFile) makeLoopback() {
 	f.File = nodefs.NewLoopbackFile(localFile)
 }
 
-// InnerFile() returns the loopbackFile that deals with local files on disk.
+// InnerFile returns the loopbackFile that deals with local files on disk.
 func (f *CachedFile) InnerFile() nodefs.File {
 	return f.File
 }

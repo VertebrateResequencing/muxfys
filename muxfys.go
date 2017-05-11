@@ -341,7 +341,7 @@ func (t *Target) ReadEnvironment(profile, path string) error {
 	return nil
 }
 
-// createRemote uses the configured details of the Target to create a *remote,
+// CreateRemote uses the configured details of the Target to create a *remote,
 // used internally by MuxFys.New().
 func (t *Target) CreateRemote(cacheBase string, maxAttempts int, logger log15.Logger) (r *remote, err error) {
 	// parse the target to get secure, host, bucket and basePath
@@ -460,10 +460,10 @@ type MuxFys struct {
 	log15.Logger
 }
 
-// New, given a configuration, returns a MuxFys that you'll use to Mount() your
-// S3 bucket(s), ensure you un-mount if killed by calling UnmountOnDeath(), then
-// Unmount() when you're done. You might check Logs() afterwards. The other
-// methods of MuxFys can be ignored in most cases.
+// New returns a MuxFys that you'll use to Mount() your S3 bucket(s), ensure you
+// un-mount if killed by calling UnmountOnDeath(), then Unmount() when you're
+// done. You might check Logs() afterwards. The other methods of MuxFys can be
+// ignored in most cases.
 func New(config *Config) (fs *MuxFys, err error) {
 	if len(config.Targets) == 0 {
 		return nil, fmt.Errorf("no targets provided")

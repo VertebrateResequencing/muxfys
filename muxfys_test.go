@@ -1276,6 +1276,7 @@ func TestMuxFys(t *testing.T) {
 					err = cmd.Run()
 					So(err, ShouldBeNil)
 					info2, err := os.Stat(path)
+					So(err, ShouldBeNil)
 					So(info.ModTime().Unix(), ShouldNotAlmostEqual, info2.ModTime().Unix(), 62)
 					So(info2.ModTime().String(), ShouldStartWith, "2006-01-02 15:04:05 +0000")
 				})
@@ -1293,6 +1294,7 @@ func TestMuxFys(t *testing.T) {
 					So(details, ShouldResemble, subEntries)
 
 					info, err := os.Stat(path)
+					So(err, ShouldBeNil)
 					So(info.ModTime().String(), ShouldStartWith, "2006-01-02 15:04:05 +0000")
 				})
 
@@ -1305,6 +1307,7 @@ func TestMuxFys(t *testing.T) {
 					err = cmd.Run()
 					So(err, ShouldBeNil)
 					info2, err := os.Stat(path)
+					So(err, ShouldBeNil)
 					So(info.ModTime().Unix(), ShouldNotAlmostEqual, info2.ModTime().Unix(), 62)
 					So(info2.ModTime().String(), ShouldStartWith, "2006-01-02 15:04:05 +0000")
 
@@ -1312,6 +1315,7 @@ func TestMuxFys(t *testing.T) {
 					err = cmd.Run()
 					So(err, ShouldBeNil)
 					info3, err := os.Stat(path)
+					So(err, ShouldBeNil)
 					So(info2.ModTime().Unix(), ShouldNotAlmostEqual, info3.ModTime().Unix(), 62)
 					So(info3.ModTime().String(), ShouldStartWith, "2007-01-02 15:04:05 +0000")
 				})
@@ -1325,6 +1329,7 @@ func TestMuxFys(t *testing.T) {
 					err = os.Chtimes(path, t, t)
 					So(err, ShouldBeNil)
 					info2, err := os.Stat(path)
+					So(err, ShouldBeNil)
 					So(info.ModTime().Unix(), ShouldNotAlmostEqual, info2.ModTime().Unix(), 62)
 					So(info2.ModTime().Unix(), ShouldAlmostEqual, t.Unix(), 2)
 				})
@@ -1335,6 +1340,7 @@ func TestMuxFys(t *testing.T) {
 					err = os.Chtimes(path, t, t)
 					So(err, ShouldBeNil)
 					info2, err := os.Stat(path)
+					So(err, ShouldBeNil)
 					So(info.ModTime().Unix(), ShouldAlmostEqual, info2.ModTime().Unix(), 62)
 					So(info2.ModTime().Unix(), ShouldNotAlmostEqual, t.Unix(), 2)
 				})
@@ -2052,7 +2058,7 @@ func TestMuxFys(t *testing.T) {
 				So(len(details), ShouldEqual, 0)
 			})
 
-			Convey("Trying to list a non-existant subdir fails as expected", func() {
+			Convey("Trying to list a non-existent subdir fails as expected", func() {
 				entries, err := ioutil.ReadDir(mountPoint + "/emptyDi")
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)

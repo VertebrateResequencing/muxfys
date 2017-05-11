@@ -39,6 +39,13 @@ import (
 	"time"
 )
 
+const (
+	blockSize   = uint64(4096)
+	totalBlocks = uint64(274877906944) // 1PB / blockSize
+	inodes      = uint64(1000000000)
+	ioSize      = uint32(1048576) // 1MB
+)
+
 // fileDetails checks the file is known and returns its attributes and the
 // remote the file came from. If not known, returns ENOENT (which should never
 // happen).
@@ -57,21 +64,16 @@ func (fs *MuxFys) fileDetails(name string, shouldBeWritable bool) (attr *fuse.At
 	return
 }
 
-// StatFS returns a constant (faked) set of details describing a very large
+// StatFs returns a constant (faked) set of details describing a very large
 // file system.
 func (fs *MuxFys) StatFs(name string) *fuse.StatfsOut {
-	const BLOCK_SIZE = uint64(4096)
-	const TOTAL_SPACE = uint64(1 * 1024 * 1024 * 1024 * 1024 * 1024) // 1PB
-	const TOTAL_BLOCKS = uint64(TOTAL_SPACE / BLOCK_SIZE)
-	const INODES = uint64(1 * 1000 * 1000 * 1000) // 1 billion
-	const IOSIZE = uint32(1 * 1024 * 1024)        // 1MB
 	return &fuse.StatfsOut{
-		Blocks: BLOCK_SIZE,
-		Bfree:  TOTAL_BLOCKS,
-		Bavail: TOTAL_BLOCKS,
-		Files:  INODES,
-		Ffree:  INODES,
-		Bsize:  IOSIZE,
+		Blocks: blockSize,
+		Bfree:  totalBlocks,
+		Bavail: totalBlocks,
+		Files:  inodes,
+		Ffree:  inodes,
+		Bsize:  ioSize,
 		// NameLen uint32
 		// Frsize  uint32
 		// Padding uint32
@@ -297,13 +299,11 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 				os.Remove(localPath)
 				fmutex.Unlock()
 				return nil, fuse.ToStatus(err)
-			} else {
-				if localStats.Size() != int64(attr.Size) {
-					os.Remove(localPath)
-					r.Error("Downloaded size is wrong", "path", remotePath, "localSize", localStats.Size(), "remoteSize", attr.Size)
-					fmutex.Unlock()
-					return nil, fuse.EIO
-				}
+			} else if localStats.Size() != int64(attr.Size) {
+				os.Remove(localPath)
+				r.Error("Downloaded size is wrong", "path", remotePath, "localSize", localStats.Size(), "remoteSize", attr.Size)
+				fmutex.Unlock()
+				return nil, fuse.EIO
 			}
 			r.CacheOverride(localPath, NewInterval(0, int64(attr.Size)))
 		} else {
