@@ -1,10 +1,5 @@
 // Copyright © 2017 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
-// The target parsing code in this file is based on code in
-// https://github.com/minio/minfs Copyright 2016 Minio, Inc.
-// licensed under the Apache License, Version 2.0 (the "License"), stating:
-// "You may not use this file except in compliance with the License. You may
-// obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0"
 //
 //  This file is part of muxfys.
 //
@@ -24,7 +19,9 @@
 package muxfys
 
 // This file implements a system for tracking which byte intervals have already
-// been downloaded, as needed by NewCachedFile.
+// been downloaded, as needed by NewCachedFile. (Method names all include the
+// word 'cache' so that you can embed a CacheTracker and not get confused by
+// the ambiguity of the verbs.)
 
 import (
 	"sync"
