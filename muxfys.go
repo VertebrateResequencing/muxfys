@@ -6,23 +6,23 @@
 // "You may not use this file except in compliance with the License. You may
 // obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0"
 //
-//  This file is part of wr.
+//  This file is part of muxfys.
 //
-//  wr is free software: you can redistribute it and/or modify
+//  muxfys is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU Lesser General Public License as published by
 //  the Free Software Foundation, either version 3 of the License, or
 //  (at your option) any later version.
 //
-//  wr is distributed in the hope that it will be useful,
+//  muxfys is distributed in the hope that it will be useful,
 //  but WITHOUT ANY WARRANTY; without even the implied warranty of
 //  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //  GNU Lesser General Public License for more details.
 //
 //  You should have received a copy of the GNU Lesser General Public License
-//  along with wr. If not, see <http://www.gnu.org/licenses/>.
+//  along with muxfys. If not, see <http://www.gnu.org/licenses/>.
 
 /*
-Package minfys is a pure Go library that lets you in-process temporarily
+Package muxfys is a pure Go library that lets you in-process temporarily
 fuse-mount S3-like buckets as a "filey" system.
 
 It has high performance, and is easy to use with nothing else to install, and no
@@ -60,7 +60,7 @@ In particular this means we hold on to directory and file attributes forever and
 assume they don't change externally. Permissions are ignored and only you get
 read/write access.
 
-When using minfys, you 1) mount, 2) do something that needs the files in your S3
+When using muxfys, you 1) mount, 2) do something that needs the files in your S3
 bucket(s), 3) unmount. Then repeat 1-3 for other things that need data in your
 S3 buckets.
 
@@ -90,7 +90,7 @@ There are at least 2 projects that implement fuse-mounting of S3 buckets:
 
 Both are designed to be run as daemons as opposed to being used in-process.
 
-minfys is implemented using minio-go for compatibility, and hanwen/go-fuse for
+muxfys is implemented using minio-go for compatibility, and hanwen/go-fuse for
 speed. (In my testing, hanwen/go-fuse and jacobsa/fuse did not have noticeably
 difference performance characteristics, but go-fuse was easier to write for.)
 However, some of its read code is inspired by goofys. Thanks to minimising
@@ -104,7 +104,7 @@ capable of, it shares and adds to goofys' non-POSIX behaviours:
     can be created and used, but do not get uploaded
   * `atime` (and typically `ctime`) is always the same as `mtime`
   * `mtime` of files is not stored remotely (remote file mtimes are of their
-    upload time, and minfys only guarantees that files are uploaded in the order
+    upload time, and muxfys only guarantees that files are uploaded in the order
     of their mtimes)
   * does not upload empty directories, can't rename remote directories
   * `fsync` is ignored, files are only flushed on `close`
@@ -123,10 +123,10 @@ worked for me (I had to hack minfs to get it to work); units are seconds
 | minfs          | 40    | n/a    |
 | s3fs           | 12.1  | n/a    |
 | s3fs caching   | 12.2  | 1.0    |
-| minfys         | 5.7   | n/a    |
-| minfys caching | 5.8   | 0.7    |
+| muxfys         | 5.7   | n/a    |
+| muxfys caching | 5.8   | 0.7    |
 
-Ie. minfs is very slow, and minfys is about 2x faster than s3fs, with no
+Ie. minfs is very slow, and muxfys is about 2x faster than s3fs, with no
 noticeable performance penalty for fuse mounting vs simply downloading the files
 you need to local disk. (You also get the benefit of being able to seek and read
 only small parts of the remote file, without having to download the whole
@@ -134,7 +134,7 @@ thing.)
 
 The same story holds true when performing the above test 100 times
 ~simultaneously; while some reads take much longer due to Ceph/network overload,
-minfys remains on average twice as fast as s3fs. The only significant change is
+muxfys remains on average twice as fast as s3fs. The only significant change is
 that s3cmd starts to fail.
 
 For a real-world test, some data processing and analysis was done with samtools,
@@ -154,14 +154,14 @@ local POSIX filesystem. Units are seconds (average of 3 attempts):
 |------------|-------|--------|
 | local(mc)  | 157   | 40     |
 | s3fs.cup   | 175   | 50     |
-| minfys.cup | 80    | 45     |
-| minfys.cuf | 79    | 44     |
-| minfys.uuf | 88    | n/a    |
+| muxfys.cup | 80    | 45     |
+| muxfys.cuf | 79    | 44     |
+| muxfys.uuf | 88    | n/a    |
 
-Ie. minfys is about 2x faster than just downloading all required files manually,
+Ie. muxfys is about 2x faster than just downloading all required files manually,
 and over 2x faster than using s3fs. There isn't much performance loss when the
 data is cached vs maximum possible performance. There's no noticeable penalty
-(indeed it's a little faster) for working directly in a minfys-mounted
+(indeed it's a little faster) for working directly in a muxfys-mounted
 directory.
 
 Finally, to compare to a highly optimised tool written in C that has built-in
@@ -183,11 +183,11 @@ nothing cached. Units are seconds (average of 3 attempts):
 | s3fs.cu     | 4.3   | 1.7    |
 | s3fs.cc     | 4.4   | 0.5    |
 | s3fs.uu     | 4.4   | 2.2    |
-| minfys.cu   | 0.3   | 0.1    |
-| minfys.cc   | 0.3   | 0.06   |
-| minfys.uu   | 0.3   | 0.1    |
+| muxfys.cu   | 0.3   | 0.1    |
+| muxfys.cc   | 0.3   | 0.06   |
+| muxfys.uu   | 0.3   | 0.1    |
 
-Ie. minfys is much faster than s3fs (more than 2x faster probably due to much
+Ie. muxfys is much faster than s3fs (more than 2x faster probably due to much
 faster and more efficient stating of files), and using it also gives a
 significant benefit over using a tools' built-in support for S3.
 
@@ -217,38 +217,38 @@ sufficient local disk space, use `CacheData: true` and set an explicit CacheDir
 (with a constant absolute path, eg. starting in /tmp). Doing this results in any
 file read downloading the whole remote file to cache it, which can be wasteful
 if you only need to read a small part of a large file. (But this is the only way
-that minfys can coordinate the cache amongst independent processes.)
+that muxfys can coordinate the cache amongst independent processes.)
 
 # Usage
 
-    import "github.com/VertebrateResequencing/wr/minfys"
+    import "github.com/VertebrateResequencing/wr/muxfys"
 
     // fully manual target configuration
-    target1 := &minfys.Target{
+    target1 := &muxfys.Target{
         Target:     "https://s3.amazonaws.com/mybucket/subdir",
         Region:     "us-east-1",
         AccessKey:  os.Getenv("AWS_ACCESS_KEY_ID"),
         SecretKey:  os.Getenv("AWS_SECRET_ACCESS_KEY"),
-        CacheDir:   "/tmp/minfys/cache",
+        CacheDir:   "/tmp/muxfys/cache",
         Write:      true,
     }
 
     // or read some configuration from standard AWS S3 config files and
     // environment variables
-    target2 := &minfys.Target{
+    target2 := &muxfys.Target{
         CacheData: true,
     }
     target2.ReadEnvironment("default", "myotherbucket/another/subdir")
 
-    cfg := &minfys.Config{
-        Mount: "/tmp/minfys/mount",
+    cfg := &muxfys.Config{
+        Mount: "/tmp/muxfys/mount",
         CacheBase: "/tmp",
         Retries:    3,
         Verbose:    true,
-        Targets:    []*minfys.Target{target, target2},
+        Targets:    []*muxfys.Target{target, target2},
     }
 
-    fs, err := minfys.New(cfg)
+    fs, err := muxfys.New(cfg)
     if err != nil {
         log.Fatalf("bad configuration: %s\n", err)
     }
@@ -259,7 +259,7 @@ that minfys can coordinate the cache amongst independent processes.)
     }
     fs.UnmountOnDeath()
 
-    // read from & write to files in /tmp/minfys/mount, which contains the
+    // read from & write to files in /tmp/muxfys/mount, which contains the
     // contents of mybucket/subdir and myotherbucket/another/subdir; writes will
     // get uploaded to mybucket/subdir when you Unmount()
 
@@ -270,12 +270,11 @@ that minfys can coordinate the cache amongst independent processes.)
 
     logs := fs.Logs()
 */
-package minfys
+package muxfys
 
 import (
 	"bufio"
 	"fmt"
-	"github.com/VertebrateResequencing/wr/internal"
 	"github.com/go-ini/ini"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
@@ -283,6 +282,7 @@ import (
 	"github.com/inconshreveable/log15"
 	"github.com/jpillora/backoff"
 	"github.com/minio/minio-go"
+	"github.com/mitchellh/go-homedir"
 	"github.com/sb10/l15h"
 	"io/ioutil"
 	"net/url"
@@ -309,16 +309,16 @@ const (
 
 var (
 	logHandlerSetter = l15h.NewChanger(log15.DiscardHandler())
-	pkgLogger        = log15.New("pkg", "minfys")
+	pkgLogger        = log15.New("pkg", "muxfys")
 )
 
 func init() {
 	pkgLogger.SetHandler(l15h.ChangeableHandler(logHandlerSetter))
 }
 
-// Config struct provides the configuration of a MinFys.
+// Config struct provides the configuration of a MuxFys.
 type Config struct {
-	// Mount is the local directory to mount on top of (minfys will try to
+	// Mount is the local directory to mount on top of (muxfys will try to
 	// create this if it doesn't exist). If not supplied, defaults to the
 	// subdirectory "mnt" in the current working directory. Note that mounting
 	// will only succeed if the Mount directory either doesn't exist or is
@@ -367,8 +367,8 @@ type Target struct {
 	CacheData bool
 
 	// CacheDir is the directory used to cache data if CacheData is true.
-	// (minfys will try to create this if it doesn't exist). If not supplied
-	// when CacheData is true, minfys will create a unique temporary directory
+	// (muxfys will try to create this if it doesn't exist). If not supplied
+	// when CacheData is true, muxfys will create a unique temporary directory
 	// in the CacheBase directory of the containing Config (these get
 	// automatically deleted on Unmount() - specified CacheDirs do not).
 	// Defining this makes CacheData be treated as true.
@@ -404,7 +404,7 @@ type Target struct {
 // environment when profile is supplied as an empty string.
 func (t *Target) ReadEnvironment(profile, path string) error {
 	if path == "" {
-		return fmt.Errorf("minfys ReadEnvironment() requires a path")
+		return fmt.Errorf("muxfys ReadEnvironment() requires a path")
 	}
 
 	profileSpecified := true
@@ -417,15 +417,30 @@ func (t *Target) ReadEnvironment(profile, path string) error {
 		}
 	}
 
-	aws, err := ini.LooseLoad(
-		internal.TildaToHome("~/.s3cfg"),
-		internal.TildaToHome(os.Getenv("AWS_SHARED_CREDENTIALS_FILE")),
-		internal.TildaToHome("~/.aws/credentials"),
-		internal.TildaToHome(os.Getenv("AWS_CONFIG_FILE")),
-		internal.TildaToHome("~/.aws/config"),
-	)
+	s3cfg, err := homedir.Expand("~/.s3cfg")
 	if err != nil {
-		return fmt.Errorf("minfys ReadEnvironment() loose loading of config files failed: %s", err)
+		return err
+	}
+	ascf, err := homedir.Expand(os.Getenv("AWS_SHARED_CREDENTIALS_FILE"))
+	if err != nil {
+		return err
+	}
+	acred, err := homedir.Expand("~/.aws/credentials")
+	if err != nil {
+		return err
+	}
+	aconf, err := homedir.Expand(os.Getenv("AWS_CONFIG_FILE"))
+	if err != nil {
+		return err
+	}
+	acon, err := homedir.Expand("~/.aws/config")
+	if err != nil {
+		return err
+	}
+
+	aws, err := ini.LooseLoad(s3cfg, ascf, acred, aconf, acon)
+	if err != nil {
+		return fmt.Errorf("muxfys ReadEnvironment() loose loading of config files failed: %s", err)
 	}
 
 	var domain, key, secret, region string
@@ -438,12 +453,15 @@ func (t *Target) ReadEnvironment(profile, path string) error {
 		key = section.Key("access_key").MustString(section.Key("aws_access_key_id").MustString(os.Getenv("AWS_ACCESS_KEY_ID")))
 		secret = section.Key("secret_key").MustString(section.Key("aws_secret_access_key").MustString(os.Getenv("AWS_SECRET_ACCESS_KEY")))
 	} else if profileSpecified {
-		return fmt.Errorf("minfys ReadEnvironment(%s) called, but no config files defined that profile", profile)
+		return fmt.Errorf("muxfys ReadEnvironment(%s) called, but no config files defined that profile", profile)
 	}
 
 	if key == "" && secret == "" {
 		// last resort, check ~/.awssecret
-		awsSec := internal.TildaToHome("~/.awssecret")
+		awsSec, err := homedir.Expand("~/.awssecret")
+		if err != nil {
+			return err
+		}
 		if file, err := os.Open(awsSec); err == nil {
 			defer file.Close()
 
@@ -496,7 +514,7 @@ func (t *Target) ReadEnvironment(profile, path string) error {
 }
 
 // createRemote uses the configured details of the Target to create a *remote,
-// used internally by MinFys.New().
+// used internally by MuxFys.New().
 func (t *Target) CreateRemote(cacheBase string, maxAttempts int, logger log15.Logger) (r *remote, err error) {
 	// parse the target to get secure, host, bucket and basePath
 	if t.Target == "" {
@@ -537,7 +555,11 @@ func (t *Target) CreateRemote(cacheBase string, maxAttempts int, logger log15.Lo
 
 	cacheDir := t.CacheDir
 	if cacheDir != "" {
-		cacheDir, err = filepath.Abs(internal.TildaToHome(cacheDir))
+		cacheDir, err = homedir.Expand(cacheDir)
+		if err != nil {
+			return
+		}
+		cacheDir, err = filepath.Abs(cacheDir)
 		if err != nil {
 			return
 		}
@@ -550,7 +572,7 @@ func (t *Target) CreateRemote(cacheBase string, maxAttempts int, logger log15.Lo
 	deleteCache := false
 	if cacheData && cacheDir == "" {
 		// decide on our own cache directory
-		cacheDir, err = ioutil.TempDir(cacheBase, ".minfys_cache")
+		cacheDir, err = ioutil.TempDir(cacheBase, ".muxfys_cache")
 		if err != nil {
 			return
 		}
@@ -587,8 +609,8 @@ func (t *Target) CreateRemote(cacheBase string, maxAttempts int, logger log15.Lo
 	return
 }
 
-// MinFys struct is the main filey system object.
-type MinFys struct {
+// MuxFys struct is the main filey system object.
+type MuxFys struct {
 	pathfs.FileSystem
 	mountPoint      string
 	dirAttr         *fuse.Attr
@@ -610,11 +632,11 @@ type MinFys struct {
 	log15.Logger
 }
 
-// New, given a configuration, returns a MinFys that you'll use to Mount() your
+// New, given a configuration, returns a MuxFys that you'll use to Mount() your
 // S3 bucket(s), ensure you un-mount if killed by calling UnmountOnDeath(), then
 // Unmount() when you're done. You might check Logs() afterwards. The other
-// methods of MinFys can be ignored in most cases.
-func New(config *Config) (fs *MinFys, err error) {
+// methods of MuxFys can be ignored in most cases.
+func New(config *Config) (fs *MuxFys, err error) {
 	if len(config.Targets) == 0 {
 		return nil, fmt.Errorf("no targets provided")
 	}
@@ -623,7 +645,11 @@ func New(config *Config) (fs *MinFys, err error) {
 	if mountPoint == "" {
 		mountPoint = "mnt"
 	}
-	mountPoint, err = filepath.Abs(internal.TildaToHome(mountPoint))
+	mountPoint, err = homedir.Expand(mountPoint)
+	if err != nil {
+		return
+	}
+	mountPoint, err = filepath.Abs(mountPoint)
 	if err != nil {
 		return
 	}
@@ -663,7 +689,7 @@ func New(config *Config) (fs *MinFys, err error) {
 	l15h.AddHandler(logger, log15.LvlFilterHandler(logLevel, l15h.CallerInfoHandler(l15h.StoreHandler(store, log15.LogfmtFormat()))))
 
 	// initialize ourselves
-	fs = &MinFys{
+	fs = &MuxFys{
 		FileSystem:   pathfs.NewDefaultFileSystem(),
 		mountPoint:   mountPoint,
 		dirs:         make(map[string][]*remote),
@@ -709,7 +735,7 @@ func New(config *Config) (fs *MinFys, err error) {
 // Mount carries out the mounting of your configured S3 bucket to your
 // configured mount point. On return, the files in your bucket will be
 // accessible. Once mounted, you can't mount again until you Unmount().
-func (fs *MinFys) Mount() (err error) {
+func (fs *MuxFys) Mount() (err error) {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 	if fs.mounted {
@@ -737,8 +763,8 @@ func (fs *MinFys) Mount() (err error) {
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
 	mOpts := &fuse.MountOptions{
 		AllowOther:           true,
-		FsName:               "MinFys",
-		Name:                 "MinFys",
+		FsName:               "MuxFys",
+		Name:                 "MuxFys",
 		RememberInodes:       true,
 		DisableXAttrs:        true,
 		IgnoreSecurityLabels: true,
@@ -784,7 +810,7 @@ func userAndGroup() (uid uint32, gid uint32, err error) {
 // calls Unmount() before calling os.Exit(1 if the unmount worked, 2 otherwise)
 // to terminate your program. Manually calling Unmount() after this cancels the
 // signal capture. This does NOT block.
-func (fs *MinFys) UnmountOnDeath() {
+func (fs *MuxFys) UnmountOnDeath() {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 	if !fs.mounted || fs.handlingSignals {
@@ -825,7 +851,7 @@ func (fs *MinFys) UnmountOnDeath() {
 // get uploaded, so this may take some time. You can optionally supply a bool
 // which if true prevents any uploads. If a target was not configured with a
 // specific CacheDir but CacheData was true, the CacheDir will be deleted.
-func (fs *MinFys) Unmount(doNotUpload ...bool) (err error) {
+func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 
@@ -873,7 +899,7 @@ func (fs *MinFys) Unmount(doNotUpload ...bool) (err error) {
 
 // uploadCreated uploads any files that previously got created. Only functions
 // in CacheData mode.
-func (fs *MinFys) uploadCreated() error {
+func (fs *MuxFys) uploadCreated() error {
 	if fs.writeRemote != nil && fs.writeRemote.cacheData {
 		fails := 0
 
@@ -912,17 +938,17 @@ func (fs *MinFys) uploadCreated() error {
 
 // Logs returns messages generated while mounted; you might call it after
 // Unmount() to see how things went. By default these will only be errors that
-// occurred, but if this MinFys was configured with Verbose on, it will also
-// contain informational and warning messages. If the minfys package was
+// occurred, but if this MuxFys was configured with Verbose on, it will also
+// contain informational and warning messages. If the muxfys package was
 // configured with a log Handler (see SetLogHandler()), these same messages
 // would have been logged as they occurred.
-func (fs *MinFys) Logs() []string {
+func (fs *MuxFys) Logs() []string {
 	return fs.logStore.Logs()
 }
 
 // SetLogHandler defines how log messages (globally for this package) are
-// logged. Logs are always retrievable as strings from individual MinFys
-// instances using MinFys.Logs(), but otherwise by default are discarded. To
+// logged. Logs are always retrievable as strings from individual MuxFys
+// instances using MuxFys.Logs(), but otherwise by default are discarded. To
 // have them logged somewhere as they are emitted, supply a
 // github.com/inconshreveable/log15 Handler, eg. log15.StderrHandler to log
 // everything to STDERR.

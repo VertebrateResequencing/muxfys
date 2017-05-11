@@ -1,22 +1,22 @@
-// Copyright © 2016-2017 Genome Research Limited
+// Copyright © 2017 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 //
-//  This file is part of wr.
+//  This file is part of muxfys.
 //
-//  wr is free software: you can redistribute it and/or modify
+//  muxfys is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU Lesser General Public License as published by
 //  the Free Software Foundation, either version 3 of the License, or
 //  (at your option) any later version.
 //
-//  wr is distributed in the hope that it will be useful,
+//  muxfys is distributed in the hope that it will be useful,
 //  but WITHOUT ANY WARRANTY; without even the implied warranty of
 //  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //  GNU Lesser General Public License for more details.
 //
 //  You should have received a copy of the GNU Lesser General Public License
-//  along with wr. If not, see <http://www.gnu.org/licenses/>.
+//  along with muxfys. If not, see <http://www.gnu.org/licenses/>.
 
-package minfys
+package muxfys
 
 import (
 	"bufio"
@@ -42,7 +42,7 @@ import (
 
 const crfile = "cloud.resources"
 
-func TestMinFys(t *testing.T) {
+func TestMuxFys(t *testing.T) {
 	target := os.Getenv("WR_S3_TARGET")
 	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
 	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
@@ -70,9 +70,9 @@ func TestMinFys(t *testing.T) {
 	// [use s3fs to mkdir s3://bucket/wr_tests/emptyDir]
 
 	if target == "" || accessKey == "" || secretKey == "" {
-		SkipConvey("Without WR_S3_TARGET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables, we'll skip minfys tests", t, func() {})
+		SkipConvey("Without WR_S3_TARGET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables, we'll skip muxfys tests", t, func() {})
 	} else {
-		crdir, err := ioutil.TempDir("", "wr_testing_minfys")
+		crdir, err := ioutil.TempDir("", "wr_testing_muxfys")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -1756,7 +1756,7 @@ func TestMinFys(t *testing.T) {
 		})
 
 		Convey("You can mount with local file caching in an explicit relative location", t, func() {
-			targetManual.CacheDir = ".wr_minfys_test_cache_dir"
+			targetManual.CacheDir = ".wr_muxfys_test_cache_dir"
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
@@ -1778,7 +1778,7 @@ func TestMinFys(t *testing.T) {
 			_, err = os.Stat(cachePath)
 			So(err, ShouldBeNil)
 			cwd, _ := os.Getwd()
-			So(cachePath, ShouldStartWith, filepath.Join(cwd, ".wr_minfys_test_cache_dir"))
+			So(cachePath, ShouldStartWith, filepath.Join(cwd, ".wr_muxfys_test_cache_dir"))
 
 			Convey("Unmounting doesn't delete the cache", func() {
 				err = fs.Unmount()
@@ -1790,7 +1790,7 @@ func TestMinFys(t *testing.T) {
 		})
 
 		Convey("You can mount with local file caching relative to the home directory", t, func() {
-			targetManual.CacheDir = "~/.wr_minfys_test_cache_dir"
+			targetManual.CacheDir = "~/.wr_muxfys_test_cache_dir"
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
@@ -1801,7 +1801,7 @@ func TestMinFys(t *testing.T) {
 				err = fs.Unmount()
 				targetManual.CacheDir = ""
 				So(err, ShouldBeNil)
-				os.RemoveAll(filepath.Join(os.Getenv("HOME"), ".wr_minfys_test_cache_dir"))
+				os.RemoveAll(filepath.Join(os.Getenv("HOME"), ".wr_muxfys_test_cache_dir"))
 			}()
 
 			path := mountPoint + "/numalphanum.txt"
@@ -1812,7 +1812,7 @@ func TestMinFys(t *testing.T) {
 			_, err = os.Stat(cachePath)
 			So(err, ShouldBeNil)
 
-			So(cachePath, ShouldStartWith, filepath.Join(os.Getenv("HOME"), ".wr_minfys_test_cache_dir"))
+			So(cachePath, ShouldStartWith, filepath.Join(os.Getenv("HOME"), ".wr_muxfys_test_cache_dir"))
 
 			Convey("Unmounting doesn't delete the cache", func() {
 				err = fs.Unmount()
@@ -1824,7 +1824,7 @@ func TestMinFys(t *testing.T) {
 		})
 
 		Convey("You can mount with a relative mount point", t, func() {
-			cfg.Mount = ".wr_minfys_test_mount_dir"
+			cfg.Mount = ".wr_muxfys_test_mount_dir"
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
@@ -1844,7 +1844,7 @@ func TestMinFys(t *testing.T) {
 		})
 
 		Convey("You can mount with a ~/ mount point", t, func() {
-			cfg.Mount = "~/.wr_minfys_test_mount_dir"
+			cfg.Mount = "~/.wr_muxfys_test_mount_dir"
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
@@ -1855,10 +1855,10 @@ func TestMinFys(t *testing.T) {
 				err = fs.Unmount()
 				cfg.Mount = mountPoint
 				So(err, ShouldBeNil)
-				os.RemoveAll(filepath.Join(os.Getenv("HOME"), ".wr_minfys_test_mount_dir"))
+				os.RemoveAll(filepath.Join(os.Getenv("HOME"), ".wr_muxfys_test_mount_dir"))
 			}()
 
-			path := filepath.Join(os.Getenv("HOME"), ".wr_minfys_test_mount_dir", "numalphanum.txt")
+			path := filepath.Join(os.Getenv("HOME"), ".wr_muxfys_test_mount_dir", "numalphanum.txt")
 			_, err = ioutil.ReadFile(path)
 			So(err, ShouldBeNil)
 		})
