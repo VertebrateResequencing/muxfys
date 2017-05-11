@@ -33,10 +33,7 @@ import (
 	"time"
 )
 
-// remote struct holds the details of each of the user's Targets. These are
-// contained in a *MuxFys, but also contain a reference to that *MuxFys,
-// primarily so that we can do easy logging and coordination amongst multiple
-// remotes.
+// remote struct holds the details of each of the user's Targets.
 type remote struct {
 	*CacheTracker
 	client        *minio.Client
