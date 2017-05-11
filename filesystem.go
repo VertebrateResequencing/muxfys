@@ -6,22 +6,22 @@
 // "You may not use this file except in compliance with the License. You may
 // obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0"
 //
-//  This file is part of wr.
+//  This file is part of muxfys.
 //
-//  wr is free software: you can redistribute it and/or modify
+//  muxfys is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU Lesser General Public License as published by
 //  the Free Software Foundation, either version 3 of the License, or
 //  (at your option) any later version.
 //
-//  wr is distributed in the hope that it will be useful,
+//  muxfys is distributed in the hope that it will be useful,
 //  but WITHOUT ANY WARRANTY; without even the implied warranty of
 //  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //  GNU Lesser General Public License for more details.
 //
 //  You should have received a copy of the GNU Lesser General Public License
-//  along with wr. If not, see <http://www.gnu.org/licenses/>.
+//  along with muxfys. If not, see <http://www.gnu.org/licenses/>.
 
-package minfys
+package muxfys
 
 // This file implements pathfs.FileSystem methods.
 
@@ -39,10 +39,17 @@ import (
 	"time"
 )
 
+const (
+	blockSize   = uint64(4096)
+	totalBlocks = uint64(274877906944) // 1PB / blockSize
+	inodes      = uint64(1000000000)
+	ioSize      = uint32(1048576) // 1MB
+)
+
 // fileDetails checks the file is known and returns its attributes and the
 // remote the file came from. If not known, returns ENOENT (which should never
 // happen).
-func (fs *MinFys) fileDetails(name string, shouldBeWritable bool) (attr *fuse.Attr, r *remote, status fuse.Status) {
+func (fs *MuxFys) fileDetails(name string, shouldBeWritable bool) (attr *fuse.Attr, r *remote, status fuse.Status) {
 	attr, exists := fs.files[name]
 	if !exists {
 		return nil, nil, fuse.ENOENT
@@ -57,21 +64,16 @@ func (fs *MinFys) fileDetails(name string, shouldBeWritable bool) (attr *fuse.At
 	return
 }
 
-// StatFS returns a constant (faked) set of details describing a very large
+// StatFs returns a constant (faked) set of details describing a very large
 // file system.
-func (fs *MinFys) StatFs(name string) *fuse.StatfsOut {
-	const BLOCK_SIZE = uint64(4096)
-	const TOTAL_SPACE = uint64(1 * 1024 * 1024 * 1024 * 1024 * 1024) // 1PB
-	const TOTAL_BLOCKS = uint64(TOTAL_SPACE / BLOCK_SIZE)
-	const INODES = uint64(1 * 1000 * 1000 * 1000) // 1 billion
-	const IOSIZE = uint32(1 * 1024 * 1024)        // 1MB
+func (fs *MuxFys) StatFs(name string) *fuse.StatfsOut {
 	return &fuse.StatfsOut{
-		Blocks: BLOCK_SIZE,
-		Bfree:  TOTAL_BLOCKS,
-		Bavail: TOTAL_BLOCKS,
-		Files:  INODES,
-		Ffree:  INODES,
-		Bsize:  IOSIZE,
+		Blocks: blockSize,
+		Bfree:  totalBlocks,
+		Bavail: totalBlocks,
+		Files:  inodes,
+		Ffree:  inodes,
+		Bsize:  ioSize,
 		// NameLen uint32
 		// Frsize  uint32
 		// Padding uint32
@@ -79,8 +81,8 @@ func (fs *MinFys) StatFs(name string) *fuse.StatfsOut {
 	}
 }
 
-// OnMount prepares MinFys for use once Mount() has been called.
-func (fs *MinFys) OnMount(nodeFs *pathfs.PathNodeFs) {
+// OnMount prepares MuxFys for use once Mount() has been called.
+func (fs *MuxFys) OnMount(nodeFs *pathfs.PathNodeFs) {
 	// we need to establish that the root directory is a directory; the next
 	// attempt by the user to get it's contents will actually do the remote call
 	// to get the directory entries
@@ -89,7 +91,7 @@ func (fs *MinFys) OnMount(nodeFs *pathfs.PathNodeFs) {
 
 // GetAttr finds out about a given object, returning information from a
 // permanent cache if possible. context is not currently used.
-func (fs *MinFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, status fuse.Status) {
+func (fs *MuxFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, status fuse.Status) {
 	if _, isDir := fs.dirs[name]; isDir {
 		attr = fs.dirAttr
 		status = fuse.OK
@@ -128,7 +130,7 @@ func (fs *MinFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, 
 // OpenDir gets the contents of the given directory for eg. `ls` purposes. It
 // also caches the attributes of all the files within. context is not currently
 // used.
-func (fs *MinFys) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
+func (fs *MuxFys) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
 	remotes, exists := fs.dirs[name]
 	if !exists {
 		return nil, fuse.ENOENT
@@ -154,7 +156,7 @@ func (fs *MinFys) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, 
 
 // openDir gets the contents of the given name, treating it as a directory,
 // caching the attributes of its contents.
-func (fs *MinFys) openDir(r *remote, name string) (status fuse.Status) {
+func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 	remotePath := r.getRemotePath(name)
 	if remotePath != "" {
 		remotePath += "/"
@@ -228,7 +230,7 @@ func (fs *MinFys) openDir(r *remote, name string) (status fuse.Status) {
 // doesn't exist. context is not currently used. If CacheData has been
 // configured, we defer to openCached(). Otherwise the real implementation is in
 // S3File.
-func (fs *MinFys) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, status fuse.Status) {
+func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, status fuse.Status) {
 	checkWritable := false
 	if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {
 		checkWritable = true
@@ -253,7 +255,7 @@ func (fs *MinFys) Open(name string, flags uint32, context *fuse.Context) (file n
 
 // openCached defers all subsequent read/write operations to a CachedFile for
 // that local file.
-func (fs *MinFys) openCached(r *remote, name string, flags uint32, context *fuse.Context, attr *fuse.Attr) (nodefs.File, fuse.Status) {
+func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse.Context, attr *fuse.Attr) (nodefs.File, fuse.Status) {
 	remotePath := r.getRemotePath(name)
 	localPath := r.getLocalPath(remotePath)
 
@@ -283,7 +285,7 @@ func (fs *MinFys) openCached(r *remote, name string, flags uint32, context *fuse
 			// to it; if we just append to the sparse file then on upload we
 			// lose the contents of the original file. We also do this if we're
 			// not deleting our cache, ie. our cache dir was chosen by the user
-			// and could be in use simultaneously by other minfys mounts
+			// and could be in use simultaneously by other muxfys mounts
 			// *** alternatively we could store Invervals in the lock file...
 			if status := r.downloadFile(remotePath, localPath); status != fuse.OK {
 				fmutex.Unlock()
@@ -297,13 +299,11 @@ func (fs *MinFys) openCached(r *remote, name string, flags uint32, context *fuse
 				os.Remove(localPath)
 				fmutex.Unlock()
 				return nil, fuse.ToStatus(err)
-			} else {
-				if localStats.Size() != int64(attr.Size) {
-					os.Remove(localPath)
-					r.Error("Downloaded size is wrong", "path", remotePath, "localSize", localStats.Size(), "remoteSize", attr.Size)
-					fmutex.Unlock()
-					return nil, fuse.EIO
-				}
+			} else if localStats.Size() != int64(attr.Size) {
+				os.Remove(localPath)
+				r.Error("Downloaded size is wrong", "path", remotePath, "localSize", localStats.Size(), "remoteSize", attr.Size)
+				fmutex.Unlock()
+				return nil, fuse.EIO
 			}
 			r.CacheOverride(localPath, NewInterval(0, int64(attr.Size)))
 		} else {
@@ -377,13 +377,13 @@ func (fs *MinFys) openCached(r *remote, name string, flags uint32, context *fuse
 }
 
 // Chmod is ignored.
-func (fs *MinFys) Chmod(name string, mode uint32, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Chmod(name string, mode uint32, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
 	return status
 }
 
 // Chown is ignored.
-func (fs *MinFys) Chown(name string, uid uint32, gid uint32, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Chown(name string, uid uint32, gid uint32, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
 	return status
 }
@@ -391,7 +391,7 @@ func (fs *MinFys) Chown(name string, uid uint32, gid uint32, context *fuse.Conte
 // Symlink creates a symbolic link. Only implemented for temporary use when
 // configured with CacheData: you can create and use symlinks but they don't get
 // uploaded. context is not currently used.
-func (fs *MinFys) Symlink(source string, dest string, context *fuse.Context) (status fuse.Status) {
+func (fs *MuxFys) Symlink(source string, dest string, context *fuse.Context) (status fuse.Status) {
 	if fs.writeRemote == nil || !fs.writeRemote.cacheData {
 		return fuse.ENOSYS
 	}
@@ -431,7 +431,7 @@ func (fs *MinFys) Symlink(source string, dest string, context *fuse.Context) (st
 
 // Readlink returns the destination of a symbolic link that was created with
 // Symlink(). context is not currently used.
-func (fs *MinFys) Readlink(name string, context *fuse.Context) (out string, status fuse.Status) {
+func (fs *MuxFys) Readlink(name string, context *fuse.Context) (out string, status fuse.Status) {
 	_, r, status := fs.fileDetails(name, true)
 	if status != fuse.OK {
 		return
@@ -442,7 +442,7 @@ func (fs *MinFys) Readlink(name string, context *fuse.Context) (out string, stat
 }
 
 // SetXAttr is ignored.
-func (fs *MinFys) SetXAttr(name string, attr string, data []byte, flags int, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) SetXAttr(name string, attr string, data []byte, flags int, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
 	return status
 }
@@ -451,7 +451,7 @@ func (fs *MinFys) SetXAttr(name string, attr string, data []byte, flags int, con
 // in the cache; otherwise ignored. This only gets called by direct operations
 // like os.Chtimes() (that don't first Open()/Create() the file). context is not
 // currently used.
-func (fs *MinFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) (status fuse.Status) {
+func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) (status fuse.Status) {
 	attr, r, status := fs.fileDetails(name, true)
 	if status != fuse.OK || !r.cacheData {
 		return
@@ -474,7 +474,7 @@ func (fs *MinFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, conte
 // implemented for when configured with CacheData; the results of the Truncate
 // are only uploaded at Unmount() time. If offset is > size of file, does
 // nothing and returns OK. context is not currently used.
-func (fs *MinFys) Truncate(name string, offset uint64, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Truncate(name string, offset uint64, context *fuse.Context) fuse.Status {
 	attr, r, status := fs.fileDetails(name, true)
 	if status != fuse.OK {
 		return status
@@ -553,7 +553,7 @@ func (fs *MinFys) Truncate(name string, offset uint64, context *fuse.Context) fu
 
 // Mkdir for a directory that doesn't exist yet only works whilst mounted in
 // CacheData mode. neither mode nor context are currently used.
-func (fs *MinFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
 	if fs.writeRemote == nil {
 		return fuse.EPERM
 	}
@@ -600,7 +600,7 @@ func (fs *MinFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 
 // Rmdir only works for directories you have created whilst mounted in
 // CacheData mode. context is not currently used.
-func (fs *MinFys) Rmdir(name string, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Rmdir(name string, context *fuse.Context) fuse.Status {
 	if fs.writeRemote == nil {
 		return fuse.EPERM
 	}
@@ -634,7 +634,7 @@ func (fs *MinFys) Rmdir(name string, context *fuse.Context) fuse.Status {
 // modified, its changes will only be uploaded to newPath at Unmount() time. For
 // directories, is only capable of renaming directories you have created whilst
 // mounted. context is not currently used.
-func (fs *MinFys) Rename(oldPath string, newPath string, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) fuse.Status {
 	if fs.writeRemote == nil {
 		return fuse.EPERM
 	}
@@ -735,7 +735,7 @@ func (fs *MinFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 
 // Unlink deletes a file from the remote S3 bucket, as well as any locally
 // cached copy. context is not currently used.
-func (fs *MinFys) Unlink(name string, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Unlink(name string, context *fuse.Context) fuse.Status {
 	_, r, status := fs.fileDetails(name, true)
 	if status != fuse.OK {
 		return status
@@ -769,14 +769,14 @@ func (fs *MinFys) Unlink(name string, context *fuse.Context) fuse.Status {
 }
 
 // Access is ignored.
-func (fs *MinFys) Access(name string, mode uint32, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Access(name string, mode uint32, context *fuse.Context) fuse.Status {
 	return fuse.OK
 }
 
 // Create creates a new file. mode and context are not currently used. Only
 // currently implemented for when configured with CacheData; the contents of the
 // created file are only uploaded at Unmount() time.
-func (fs *MinFys) Create(name string, flags uint32, mode uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
+func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
 	r := fs.writeRemote
 	if r == nil {
 		return nil, fuse.EPERM
@@ -826,7 +826,7 @@ func (fs *MinFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 // addNewEntryToItsDir adds a DirEntry for the file/dir named name to that
 // object's containing directory entries. mode should be fuse.S_IFREG or
 // fuse.S_IFDIR
-func (fs *MinFys) addNewEntryToItsDir(name string, mode int) {
+func (fs *MuxFys) addNewEntryToItsDir(name string, mode int) {
 	d := fuse.DirEntry{
 		Name: filepath.Base(name),
 		Mode: uint32(mode),
@@ -846,7 +846,7 @@ func (fs *MinFys) addNewEntryToItsDir(name string, mode int) {
 
 // rmEntryFromItsDir removes a DirEntry for the file/dir named name from that
 // object's containing directory entries.
-func (fs *MinFys) rmEntryFromItsDir(name string) {
+func (fs *MuxFys) rmEntryFromItsDir(name string) {
 	parent := filepath.Dir(name)
 	if parent == "." {
 		parent = ""
@@ -871,7 +871,7 @@ func (fs *MinFys) rmEntryFromItsDir(name string) {
 // getFileMutex prepares a lock file for the given local path (in that path's
 // directory, creating the directory first if necessary), and returns a mutex
 // that you should Lock() and Unlock().
-func (fs *MinFys) getFileMutex(localPath string) (mutex *filemutex.FileMutex, err error) {
+func (fs *MuxFys) getFileMutex(localPath string) (mutex *filemutex.FileMutex, err error) {
 	parent := filepath.Dir(localPath)
 	if _, serr := os.Stat(parent); serr != nil && os.IsNotExist(serr) {
 		err = os.MkdirAll(parent, dirMode)
@@ -880,7 +880,7 @@ func (fs *MinFys) getFileMutex(localPath string) (mutex *filemutex.FileMutex, er
 			return
 		}
 	}
-	mutex, err = filemutex.New(filepath.Join(parent, ".minfys_lock."+filepath.Base(localPath)))
+	mutex, err = filemutex.New(filepath.Join(parent, ".muxfys_lock."+filepath.Base(localPath)))
 	if err != nil {
 		fs.Error("Could not create lock file", "path", localPath, "err", err)
 	}

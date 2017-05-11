@@ -4,22 +4,22 @@
 // https://github.com/gastonsimone/go-dojo/tree/master/mergeint (unspecified
 // copyright and license).
 //
-//  This file is part of wr.
+//  This file is part of muxfys.
 //
-//  wr is free software: you can redistribute it and/or modify
+//  muxfys is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU Lesser General Public License as published by
 //  the Free Software Foundation, either version 3 of the License, or
 //  (at your option) any later version.
 //
-//  wr is distributed in the hope that it will be useful,
+//  muxfys is distributed in the hope that it will be useful,
 //  but WITHOUT ANY WARRANTY; without even the implied warranty of
 //  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //  GNU Lesser General Public License for more details.
 //
 //  You should have received a copy of the GNU Lesser General Public License
-//  along with wr. If not, see <http://www.gnu.org/licenses/>.
+//  along with muxfys. If not, see <http://www.gnu.org/licenses/>.
 
-package minfys
+package muxfys
 
 /*
 This file implements the interval-related code used by NewCachedFile to

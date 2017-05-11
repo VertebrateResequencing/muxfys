@@ -1,22 +1,22 @@
 // Copyright © 2017 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 //
-//  This file is part of wr.
+//  This file is part of muxfys.
 //
-//  wr is free software: you can redistribute it and/or modify
+//  muxfys is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU Lesser General Public License as published by
 //  the Free Software Foundation, either version 3 of the License, or
 //  (at your option) any later version.
 //
-//  wr is distributed in the hope that it will be useful,
+//  muxfys is distributed in the hope that it will be useful,
 //  but WITHOUT ANY WARRANTY; without even the implied warranty of
 //  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //  GNU Lesser General Public License for more details.
 //
 //  You should have received a copy of the GNU Lesser General Public License
-//  along with wr. If not, see <http://www.gnu.org/licenses/>.
+//  along with muxfys. If not, see <http://www.gnu.org/licenses/>.
 
-package minfys
+package muxfys
 
 // This file contains the implementation of remote struct: all the code that
 // interacts with the remote S3 system.
@@ -34,7 +34,7 @@ import (
 )
 
 // remote struct holds the details of each of the user's Targets. These are
-// contained in a *MinFys, but also contain a reference to that *MinFys,
+// contained in a *MuxFys, but also contain a reference to that *MuxFys,
 // primarily so that we can do easy logging and coordination amongst multiple
 // remotes.
 type remote struct {
