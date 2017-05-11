@@ -35,7 +35,7 @@ will work from and just run:
 
 It is a "filey" system ('fys' instead of 'fs') in that it cares about
 performance and efficiency first, and POSIX second. It is designed around a
-particular use- case:
+particular use-case:
 
 Non-interactively read a small handful of files who's paths you already know,
 probably a few times for small files and only once for large files, then upload
