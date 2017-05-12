@@ -80,10 +80,18 @@ func TestMuxFys(t *testing.T) {
 		mountPoint := filepath.Join(crdir, "mount")
 		cacheDir := filepath.Join(crdir, "cacheDir")
 
-		targetManual := &Target{
+		manualConfig := &S3Config{
 			Target:    target,
 			AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
 			SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		}
+		accessor, err := NewS3Accessor(manualConfig)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		remoteConfig := &RemoteConfig{
+			Accessor:  accessor,
 			CacheData: true,
 			Write:     false,
 		}
@@ -94,30 +102,27 @@ func TestMuxFys(t *testing.T) {
 			Verbose: false,
 		}
 
-		Convey("You can configure targets from the environment", t, func() {
-			targetEnv := &Target{}
-			err = targetEnv.ReadEnvironment("", "mybucket/subdir")
+		Convey("You can configure remotes from the environment", t, func() {
+			envConfig, err := S3ConfigFromEnvironment("", "mybucket/subdir")
 			So(err, ShouldBeNil)
-			So(targetEnv.AccessKey, ShouldEqual, targetManual.AccessKey)
-			So(targetEnv.SecretKey, ShouldEqual, targetManual.SecretKey)
-			So(targetEnv.Target, ShouldNotBeNil)
+			So(envConfig.AccessKey, ShouldEqual, manualConfig.AccessKey)
+			So(envConfig.SecretKey, ShouldEqual, manualConfig.SecretKey)
+			So(envConfig.Target, ShouldNotBeNil)
 			u, _ := url.Parse(target)
 			uNew := url.URL{
 				Scheme: u.Scheme,
 				Host:   u.Host,
 				Path:   "mybucket/subdir",
 			}
-			So(targetEnv.Target, ShouldEqual, uNew.String())
+			So(envConfig.Target, ShouldEqual, uNew.String())
 
-			targetEnv2 := &Target{}
-			err = targetEnv2.ReadEnvironment("default", "mybucket/subdir")
+			envConfig2, err := S3ConfigFromEnvironment("default", "mybucket/subdir")
 			So(err, ShouldBeNil)
-			So(targetEnv2.AccessKey, ShouldEqual, targetEnv.AccessKey)
-			So(targetEnv2.SecretKey, ShouldEqual, targetEnv.SecretKey)
-			So(targetEnv2.Target, ShouldEqual, targetEnv.Target)
+			So(envConfig2.AccessKey, ShouldEqual, envConfig.AccessKey)
+			So(envConfig2.SecretKey, ShouldEqual, envConfig.SecretKey)
+			So(envConfig2.Target, ShouldEqual, envConfig.Target)
 
-			targetEnv3 := &Target{}
-			err = targetEnv3.ReadEnvironment("-fake-", "mybucket/subdir")
+			_, err = S3ConfigFromEnvironment("-fake-", "mybucket/subdir")
 			So(err, ShouldNotBeNil)
 
 			// *** how can we test chaining of ~/.s3cfg and ~/.aws/credentials
@@ -131,7 +136,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -277,7 +282,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -356,7 +361,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -459,16 +464,16 @@ func TestMuxFys(t *testing.T) {
 		})
 
 		Convey("You can mount with local file caching in write mode", t, func() {
-			targetManual.Write = true
+			remoteConfig.Write = true
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
 				err = fs.Unmount()
-				targetManual.Write = false
+				remoteConfig.Write = false
 				So(err, ShouldBeNil)
 			}()
 
@@ -511,7 +516,7 @@ func TestMuxFys(t *testing.T) {
 
 				// remounting lets us read the file again - it actually got
 				// uploaded
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
@@ -549,7 +554,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -575,7 +580,7 @@ func TestMuxFys(t *testing.T) {
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
 
-						err = fs.Mount(targetManual)
+						err = fs.Mount(remoteConfig)
 						So(err, ShouldBeNil)
 
 						cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
@@ -621,7 +626,7 @@ func TestMuxFys(t *testing.T) {
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
 
-						err = fs.Mount(targetManual)
+						err = fs.Mount(remoteConfig)
 						So(err, ShouldBeNil)
 
 						cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
@@ -666,7 +671,7 @@ func TestMuxFys(t *testing.T) {
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
 
-						err = fs.Mount(targetManual)
+						err = fs.Mount(remoteConfig)
 						So(err, ShouldBeNil)
 
 						bytes, err = ioutil.ReadFile(path)
@@ -693,7 +698,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					defer func() {
@@ -716,7 +721,7 @@ func TestMuxFys(t *testing.T) {
 					// unmount first to clear the cache
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					dest := mountPoint + "/write.moved"
@@ -738,7 +743,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					defer func() {
@@ -789,7 +794,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					defer func() {
@@ -873,7 +878,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -922,7 +927,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldBeNil)
 				}()
 
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				Convey("You can't write to a file you open RDONLY", func() {
@@ -957,7 +962,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -976,7 +981,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					bytes, err := ioutil.ReadFile(path)
@@ -1001,7 +1006,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					// now do a partial read
@@ -1032,7 +1037,7 @@ func TestMuxFys(t *testing.T) {
 
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					// check it worked correctly
@@ -1080,7 +1085,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					stat, err = os.Stat(cachePath)
@@ -1113,7 +1118,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					stat, err = os.Stat(cachePath)
@@ -1147,7 +1152,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					stat, err = os.Stat(cachePath)
@@ -1188,7 +1193,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -1223,7 +1228,7 @@ func TestMuxFys(t *testing.T) {
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					bytes, err = ioutil.ReadFile(path)
@@ -1379,7 +1384,7 @@ func TestMuxFys(t *testing.T) {
 
 				// remounting lets us read the file again - it actually got
 				// uploaded
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				bytes, err = ioutil.ReadFile(path)
@@ -1424,7 +1429,7 @@ func TestMuxFys(t *testing.T) {
 
 				// remounting lets us read the file again - it actually got
 				// uploaded
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				bytes, err = ioutil.ReadFile(path)
@@ -1517,7 +1522,7 @@ func TestMuxFys(t *testing.T) {
 					os.Remove(path3)
 				}()
 
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				info1, err := os.Stat(path1)
@@ -1561,7 +1566,7 @@ func TestMuxFys(t *testing.T) {
 				Convey("But they're not uploaded", func() {
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
-					err = fs.Mount(targetManual)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
 					_, err = os.Stat(dest)
@@ -1578,16 +1583,16 @@ func TestMuxFys(t *testing.T) {
 		})
 
 		Convey("You can mount with local file caching in an explicit location", t, func() {
-			targetManual.CacheDir = cacheDir
+			remoteConfig.CacheDir = cacheDir
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
 				err = fs.Unmount()
-				targetManual.CacheDir = ""
+				remoteConfig.CacheDir = ""
 				So(err, ShouldBeNil)
 			}()
 
@@ -1636,7 +1641,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -1711,7 +1716,7 @@ func TestMuxFys(t *testing.T) {
 				// remount to clear the cache
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 				streamFile(init, 0)
 
@@ -1764,18 +1769,18 @@ func TestMuxFys(t *testing.T) {
 		})
 
 		Convey("You can mount with local file caching in an explicit relative location", t, func() {
-			targetManual.CacheDir = ".wr_muxfys_test_cache_dir"
+			remoteConfig.CacheDir = ".wr_muxfys_test_cache_dir"
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
-				os.RemoveAll(targetManual.CacheDir)
-				targetManual.CacheDir = ""
+				os.RemoveAll(remoteConfig.CacheDir)
+				remoteConfig.CacheDir = ""
 			}()
 
 			path := mountPoint + "/numalphanum.txt"
@@ -1798,16 +1803,16 @@ func TestMuxFys(t *testing.T) {
 		})
 
 		Convey("You can mount with local file caching relative to the home directory", t, func() {
-			targetManual.CacheDir = "~/.wr_muxfys_test_cache_dir"
+			remoteConfig.CacheDir = "~/.wr_muxfys_test_cache_dir"
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
 				err = fs.Unmount()
-				targetManual.CacheDir = ""
+				remoteConfig.CacheDir = ""
 				So(err, ShouldBeNil)
 				os.RemoveAll(filepath.Join(os.Getenv("HOME"), ".wr_muxfys_test_cache_dir"))
 			}()
@@ -1836,7 +1841,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1856,7 +1861,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1876,7 +1881,7 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -1902,16 +1907,16 @@ func TestMuxFys(t *testing.T) {
 		})
 
 		Convey("You can mount in write mode and not upload on unmount", t, func() {
-			targetManual.Write = true
+			remoteConfig.Write = true
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
 				err = fs.Unmount()
-				targetManual.Write = false
+				remoteConfig.Write = false
 				So(err, ShouldBeNil)
 			}()
 
@@ -1940,7 +1945,7 @@ func TestMuxFys(t *testing.T) {
 			So(os.IsNotExist(err), ShouldBeTrue)
 
 			// remounting reveals it did not get uploaded
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			_, err = os.Stat(cachePath)
@@ -1961,13 +1966,13 @@ func TestMuxFys(t *testing.T) {
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			_, err = ioutil.ReadDir(mountPoint)
 			expectedErrorLog := ""
 			if err != nil {
-				expectedErrorLog = "ListObjectsV2"
+				expectedErrorLog = "ListEntries"
 			}
 
 			err = fs.Unmount()
@@ -1978,7 +1983,7 @@ func TestMuxFys(t *testing.T) {
 			var foundExpectedLog bool
 			var foundErrorLog bool
 			for _, log := range logs {
-				if strings.Contains(log, "ListObjectsV2") {
+				if strings.Contains(log, "ListEntries") {
 					foundExpectedLog = true
 				}
 				if expectedErrorLog != "" && strings.Contains(log, expectedErrorLog) {
@@ -1992,17 +1997,20 @@ func TestMuxFys(t *testing.T) {
 		})
 
 		Convey("You can mount without local file caching", t, func() {
-			targetManual.CacheData = false
+			remoteConfig.CacheData = false
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 			}()
+
+			cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("1G.file"))
+			So(cachePath, ShouldBeBlank)
 
 			Convey("Listing mount directory and subdirs works", func() {
 				s := time.Now()
@@ -2187,25 +2195,24 @@ func TestMuxFys(t *testing.T) {
 			})
 		})
 
-		Convey("You can mount multiple targets on the same mount point", t, func() {
-			targetManual.CacheData = true
-			targetManual2 := &Target{
+		Convey("You can mount multiple remotes on the same mount point", t, func() {
+			remoteConfig.CacheData = true
+			manualConfig2 := &S3Config{
 				Target:    target + "/sub",
 				AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
 				SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			}
+			accessor, err := NewS3Accessor(manualConfig2)
+			So(err, ShouldBeNil)
+			remoteConfig2 := &RemoteConfig{
+				Accessor:  accessor,
 				CacheData: true,
 			}
 
-			cfgMultiplex := &Config{
-				Mount:   mountPoint,
-				Retries: 3,
-				Verbose: false,
-			}
-
-			fs, err := New(cfgMultiplex)
+			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual, targetManual2)
+			err = fs.Mount(remoteConfig, remoteConfig2)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -2262,7 +2269,7 @@ func TestMuxFys(t *testing.T) {
 				So(details, ShouldResemble, []string{"deep:dir", "empty.file:file:0"})
 			})
 
-			Convey("You can immediately list a subdir of the second target", func() {
+			Convey("You can immediately list a subdir of the second remote", func() {
 				entries, err := ioutil.ReadDir(mountPoint + "/deep")
 				So(err, ShouldBeNil)
 
@@ -2288,7 +2295,7 @@ func TestMuxFys(t *testing.T) {
 				So(info.Size(), ShouldEqual, 4)
 			})
 
-			Convey("You can read files from both targets", func() {
+			Convey("You can read files from both remotes", func() {
 				path := mountPoint + "/deep/bar"
 				bytes, err := ioutil.ReadFile(path)
 				So(err, ShouldBeNil)
@@ -2304,11 +2311,18 @@ func TestMuxFys(t *testing.T) {
 		Convey("You can mount the bucket directly", t, func() {
 			u, err := url.Parse(target)
 			parts := strings.Split(u.Path[1:], "/")
-			targetManual.Target = u.Scheme + "://" + u.Host + "/" + parts[0]
+			manualConfig.Target = u.Scheme + "://" + u.Host + "/" + parts[0]
+			accessor, err = NewS3Accessor(manualConfig)
+			So(err, ShouldBeNil)
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessor,
+				CacheData: true,
+				Write:     false,
+			}
 			fs, err := New(cfg)
 			So(err, ShouldBeNil)
 
-			err = fs.Mount(targetManual)
+			err = fs.Mount(remoteConfig)
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -2325,18 +2339,25 @@ func TestMuxFys(t *testing.T) {
 			})
 
 			Convey("You can't mount more than once at a time", func() {
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldNotBeNil)
 			})
 		})
 
 		if strings.HasPrefix(target, "https://cog.sanger.ac.uk") {
 			Convey("You can mount a public bucket", t, func() {
-				targetManual.Target = "https://cog.sanger.ac.uk/npg-repository"
+				manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository"
+				accessor, err = NewS3Accessor(manualConfig)
+				So(err, ShouldBeNil)
+				remoteConfig := &RemoteConfig{
+					Accessor:  accessor,
+					CacheData: true,
+					Write:     false,
+				}
 				fs, err := New(cfg)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				defer func() {
@@ -2367,11 +2388,18 @@ func TestMuxFys(t *testing.T) {
 			})
 
 			Convey("You can mount a public bucket at a deep path", t, func() {
-				targetManual.Target = "https://cog.sanger.ac.uk/npg-repository/references/Homo_sapiens/GRCh38_full_analysis_set_plus_decoy_hla/all/fasta"
+				manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository/references/Homo_sapiens/GRCh38_full_analysis_set_plus_decoy_hla/all/fasta"
+				accessor, err = NewS3Accessor(manualConfig)
+				So(err, ShouldBeNil)
+				remoteConfig := &RemoteConfig{
+					Accessor:  accessor,
+					CacheData: true,
+					Write:     false,
+				}
 				fs, err := New(cfg)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				defer func() {
@@ -2401,24 +2429,31 @@ func TestMuxFys(t *testing.T) {
 			})
 
 			Convey("You can multiplex different buckets", t, func() {
-				targetManual2 := &Target{
+				manualConfig2 := &S3Config{
 					Target:    target + "/sub",
 					AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
 					SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+				}
+				accessor2, err := NewS3Accessor(manualConfig2)
+				So(err, ShouldBeNil)
+				remoteConfig2 := &RemoteConfig{
+					Accessor:  accessor2,
 					CacheData: false,
 				}
-				targetManual.Target = "https://cog.sanger.ac.uk/npg-repository/references/Homo_sapiens/GRCh38_full_analysis_set_plus_decoy_hla/all/fasta"
-				targetManual.CacheData = true
-				cfgMultiplex := &Config{
-					Mount:   mountPoint,
-					Retries: 3,
-					Verbose: false,
+
+				manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository/references/Homo_sapiens/GRCh38_full_analysis_set_plus_decoy_hla/all/fasta"
+				accessor, err = NewS3Accessor(manualConfig)
+				So(err, ShouldBeNil)
+				remoteConfig := &RemoteConfig{
+					Accessor:  accessor,
+					CacheData: true,
+					Write:     false,
 				}
 
-				fs, err := New(cfgMultiplex)
+				fs, err := New(cfg)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount(targetManual, targetManual2)
+				err = fs.Mount(remoteConfig, remoteConfig2)
 				So(err, ShouldBeNil)
 
 				defer func() {
@@ -2444,13 +2479,21 @@ func TestMuxFys(t *testing.T) {
 			})
 
 			Convey("You can mount a public bucket with blank credentials", t, func() {
-				targetManual.Target = "https://cog.sanger.ac.uk/npg-repository"
-				targetManual.AccessKey = ""
-				targetManual.SecretKey = ""
+				manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository"
+				manualConfig.AccessKey = ""
+				manualConfig.SecretKey = ""
+				accessor, err = NewS3Accessor(manualConfig)
+				So(err, ShouldBeNil)
+				remoteConfig := &RemoteConfig{
+					Accessor:  accessor,
+					CacheData: true,
+					Write:     false,
+				}
+
 				fs, err := New(cfg)
 				So(err, ShouldBeNil)
 
-				err = fs.Mount(targetManual)
+				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				defer func() {

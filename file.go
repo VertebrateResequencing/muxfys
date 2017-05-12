@@ -20,7 +20,7 @@
 
 package muxfys
 
-// This file implements pathfs.File methods.
+// This file implements pathfs.File methods for remote and cached files.
 
 import (
 	"github.com/hanwen/go-fuse/fuse"
@@ -32,10 +32,9 @@ import (
 	"time"
 )
 
-// S3File struct is muxfys' implementation of pathfs.File, providing read/write
-// operations on files in the remote bucket (when we're not doing any local
-// caching of data).
-type S3File struct {
+// remoteFile struct is muxfys' implementation of pathfs.File for reading data
+// directly from a remote file system or object store.
+type remoteFile struct {
 	nodefs.File
 	r          *remote
 	path       string
@@ -46,10 +45,10 @@ type S3File struct {
 	skips      map[int64][]byte
 }
 
-// NewS3File creates a new S3File. For all the methods not yet implemented, fuse
-// will get a not yet implemented error.
-func NewS3File(r *remote, path string, size uint64) nodefs.File {
-	return &S3File{
+// newRemoteFile creates a new RemoteFile. For all the methods not yet
+// implemented (notably writing), fuse will get a not yet implemented error.
+func newRemoteFile(r *remote, path string, size uint64) nodefs.File {
+	return &remoteFile{
 		File:  nodefs.NewDefaultFile(),
 		r:     r,
 		path:  path,
@@ -61,7 +60,7 @@ func NewS3File(r *remote, path string, size uint64) nodefs.File {
 // Read supports random reading of data from the file. This gets called as many
 // times as are needed to get through all the desired data len(buf) bytes at a
 // time.
-func (f *S3File) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Status) {
+func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Status) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
@@ -120,7 +119,7 @@ func (f *S3File) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Status) {
 		return fuse.ReadResultData([]byte{}), status
 	}
 
-	// store the minio reader to read from later
+	// store the reader to read from later
 	f.reader = object
 
 	status = f.fillBuffer(buf)
@@ -131,7 +130,7 @@ func (f *S3File) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Status) {
 }
 
 // fillBuffer reads from our remote reader to the Read() buffer.
-func (f *S3File) fillBuffer(buf []byte) (status fuse.Status) {
+func (f *remoteFile) fillBuffer(buf []byte) (status fuse.Status) {
 	bytesRead, err := io.ReadFull(f.reader, buf)
 	if err != nil {
 		f.reader.Close()
@@ -149,7 +148,7 @@ func (f *S3File) fillBuffer(buf []byte) (status fuse.Status) {
 }
 
 // Release makes sure we close our readers.
-func (f *S3File) Release() {
+func (f *remoteFile) Release() {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	if f.reader != nil {
@@ -160,37 +159,44 @@ func (f *S3File) Release() {
 
 // Fsync always returns OK as opposed to "not imlemented" so that write-sync-
 // write works.
-func (f *S3File) Fsync(flags int) fuse.Status {
+func (f *remoteFile) Fsync(flags int) fuse.Status {
 	return fuse.OK
 }
 
-// CachedFile is used as a wrapper around a nodefs.loopbackFile, the only
+// cachedFile is used as a wrapper around a nodefs.loopbackFile, the only
 // difference being that on Write it updates the given attr's Size, Mtime and
 // Atime, and on Read it copies data from remote to local disk if not requested
 // before.
-type CachedFile struct {
+type cachedFile struct {
 	nodefs.File
 	r          *remote
 	remotePath string
 	localPath  string
 	flags      int
 	attr       *fuse.Attr
-	s3file     *S3File
+	remoteFile *remoteFile
 	openedRW   bool
 	mutex      sync.Mutex
 	log15.Logger
 }
 
-// NewCachedFile makes a CachedFile that reads each byte from remotePath only
+// newCachedFile makes a CachedFile that reads each byte from remotePath only
 // once, returning subsequent reads from and writing to localPath.
-func NewCachedFile(r *remote, remotePath, localPath string, attr *fuse.Attr, flags uint32, logger log15.Logger) nodefs.File {
-	f := &CachedFile{r: r, remotePath: remotePath, localPath: localPath, flags: int(flags), attr: attr, Logger: logger.New("rpath", remotePath, "lpath", localPath)}
+func newCachedFile(r *remote, remotePath, localPath string, attr *fuse.Attr, flags uint32, logger log15.Logger) nodefs.File {
+	f := &cachedFile{
+		r:          r,
+		remotePath: remotePath,
+		localPath:  localPath,
+		flags:      int(flags),
+		attr:       attr,
+		Logger:     logger.New("rpath", remotePath, "lpath", localPath),
+	}
 	f.makeLoopback()
-	f.s3file = NewS3File(r, remotePath, attr.Size).(*S3File)
+	f.remoteFile = newRemoteFile(r, remotePath, attr.Size).(*remoteFile)
 	return f
 }
 
-func (f *CachedFile) makeLoopback() {
+func (f *cachedFile) makeLoopback() {
 	localFile, err := os.OpenFile(f.localPath, f.flags, os.FileMode(fileMode))
 	if err != nil {
 		f.Error("Could not open file", "err", err)
@@ -206,13 +212,13 @@ func (f *CachedFile) makeLoopback() {
 }
 
 // InnerFile returns the loopbackFile that deals with local files on disk.
-func (f *CachedFile) InnerFile() nodefs.File {
+func (f *cachedFile) InnerFile() nodefs.File {
 	return f.File
 }
 
 // Write passes the real work to our InnerFile(), also updating our cached
 // attr.
-func (f *CachedFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
+func (f *cachedFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
 	n, s := f.InnerFile().Write(data, offset)
 	f.attr.Size += uint64(n)
 	mTime := uint64(time.Now().Unix())
@@ -224,7 +230,7 @@ func (f *CachedFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
 
 // Utimens gets called by things like `touch -d "2006-01-02 15:04:05" filename`,
 // and we need to update our cached attr as well as the local file.
-func (f *CachedFile) Utimens(Atime *time.Time, Mtime *time.Time) (status fuse.Status) {
+func (f *cachedFile) Utimens(Atime *time.Time, Mtime *time.Time) (status fuse.Status) {
 	status = f.InnerFile().Utimens(Atime, Mtime)
 	if status == fuse.OK {
 		f.attr.Atime = uint64(Atime.Unix())
@@ -235,8 +241,8 @@ func (f *CachedFile) Utimens(Atime *time.Time, Mtime *time.Time) (status fuse.St
 
 // Read checks to see if we've previously stored these bytes in our local
 // cached file, and if so just defers to our InnerFile(). If not, gets the data
-// from the remote object and stores it in the cache file.
-func (f *CachedFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Status) {
+// from the remote file and stores it in the cache file.
+func (f *cachedFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Status) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
@@ -252,14 +258,14 @@ func (f *CachedFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 	}
 	newIvs := f.r.Uncached(f.localPath, request)
 
-	// *** have tried using a single s3file per remote, and also trying to
+	// *** have tried using a single RemoteFile per remote, and also trying to
 	// combine sets of reads on the same file, but performance is best just
 	// letting different reads on the same file interleave
 
 	// read remote data and store in cache file for the previously unread parts
 	for _, iv := range newIvs {
 		ivBuf := make([]byte, iv.Length(), iv.Length())
-		_, status := f.s3file.Read(ivBuf, iv.Start)
+		_, status := f.remoteFile.Read(ivBuf, iv.Start)
 		if status != fuse.OK {
 			// we warn instead of error because this is a "normal" situation
 			// when trying to read from non-existent files
