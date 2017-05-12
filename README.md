@@ -135,7 +135,7 @@ significant benefit over using a tools' built-in support for S3.
 
 # Status & Limitations
 
-The only "Remote" type implemented so far is for S3-like systems.
+The only `RemoteAccessor` implemented so far is for S3-like object stores.
 
 In cached mode, random reads and writes have been implemented.
 
@@ -178,54 +178,71 @@ that muxfys can coordinate the cache amongst independent processes.)
 
 # Usage
 
-    import "github.com/VertebrateResequencing/wr/muxfys"
+```go
+import "github.com/VertebrateResequencing/wr/muxfys"
 
-    // fully manual target configuration
-    target1 := &muxfys.Target{
-        Target:     "https://s3.amazonaws.com/mybucket/subdir",
-        Region:     "us-east-1",
-        AccessKey:  os.Getenv("AWS_ACCESS_KEY_ID"),
-        SecretKey:  os.Getenv("AWS_SECRET_ACCESS_KEY"),
-        CacheDir:   "/tmp/muxfys/cache",
-        Write:      true,
-    }
+// fully manual S3 configuration
+accessorConfig := &muxfys.S3Config{
+    Target:    "https://s3.amazonaws.com/mybucket/subdir",
+    Region:    "us-east-1",
+    AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
+    SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+}
+accessor, err := muxfys.NewS3Accessor(accessorConfig)
+if err != nil {
+    log.Fatal(err)
+}
+remoteConfig1 := &muxfys.RemoteConfig{
+    Accessor: accessor,
+    CacheDir: "/tmp/muxfys/cache",
+    Write:    true,
+}
 
-    // or read some configuration from standard AWS S3 config files and
-    // environment variables
-    target2 := &muxfys.Target{
-        CacheData: true,
-    }
-    target2.ReadEnvironment("default", "myotherbucket/another/subdir")
+// or read configuration from standard AWS S3 config files and environment
+// variables
+accessorConfig, err = muxfys.S3ConfigFromEnvironment("default",
+    "myotherbucket/another/subdir")
+if err != nil {
+    log.Fatalf("could not read config from environment: %s\n", err)
+}
+accessor, err = muxfys.NewS3Accessor(accessorConfig)
+if err != nil {
+    log.Fatal(err)
+}
+remoteConfig2 := &muxfys.RemoteConfig{
+    Accessor:  accessor,
+    CacheData: true,
+}
 
-    cfg := &muxfys.Config{
-        Mount: "/tmp/muxfys/mount",
-        CacheBase: "/tmp",
-        Retries:    3,
-        Verbose:    true,
-        Targets:    []*muxfys.Target{target, target2},
-    }
+cfg := &muxfys.Config{
+    Mount:     "/tmp/muxfys/mount",
+    CacheBase: "/tmp",
+    Retries:   3,
+    Verbose:   true,
+}
 
-    fs, err := muxfys.New(cfg)
-    if err != nil {
-        log.Fatalf("bad configuration: %s\n", err)
-    }
+fs, err := muxfys.New(cfg)
+if err != nil {
+    log.Fatalf("bad configuration: %s\n", err)
+}
 
-    err = fs.Mount()
-    if err != nil {
-        log.Fatalf("could not mount: %s\n", err)
-    }
-    fs.UnmountOnDeath()
+err = fs.Mount(remoteConfig, remoteConfig2)
+if err != nil {
+    log.Fatalf("could not mount: %s\n", err)
+}
+fs.UnmountOnDeath()
 
-    // read from & write to files in /tmp/muxfys/mount, which contains the
-    // contents of mybucket/subdir and myotherbucket/another/subdir; writes will
-    // get uploaded to mybucket/subdir when you Unmount()
+// read from & write to files in /tmp/muxfys/mount, which contains the
+// contents of mybucket/subdir and myotherbucket/another/subdir; writes will
+// get uploaded to mybucket/subdir when you Unmount()
 
-    err = fs.Unmount()
-    if err != nil {
-        log.Fatalf("could not unmount: %s\n", err)
-    }
+err = fs.Unmount()
+if err != nil {
+    log.Fatalf("could not unmount: %s\n", err)
+}
 
-    logs := fs.Logs()
+logs := fs.Logs()
+```
 
 # Provenance
 
@@ -259,3 +276,9 @@ difference performance characteristics, but go-fuse was easier to write for.)
 However, some of its read code is inspired by goofys. Thanks to minimising
 remote calls to the remote S3 system, and only implementing what S3 is generally
 capable of, it shares and adds to goofys' non-POSIX behaviours.
+
+## Versioning
+
+The public API of the master branch of muxfys will probably remain backwards
+compatible, but this is not guaranteed. If you want to rely on a stable API, you
+must vendor the library.

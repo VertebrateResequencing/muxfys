@@ -18,48 +18,185 @@
 
 package muxfys
 
-// This file contains the implementation of remote struct: all the code that
-// interacts with the remote S3 system.
+// This file contains the implementation of remote struct and its configuration
+// etc.
 
 import (
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/inconshreveable/log15"
 	"github.com/jpillora/backoff"
-	"github.com/minio/minio-go"
+	"github.com/mitchellh/go-homedir"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 )
 
-// remote struct holds the details of each of the user's Targets. These are
-// contained in a *MuxFys, but also contain a reference to that *MuxFys,
-// primarily so that we can do easy logging and coordination amongst multiple
-// remotes.
+// RemoteConfig struct is how you configure what you want to mount, and how you
+// want to cache.
+type RemoteConfig struct {
+	// Accessor is the RemoteAccessor for your desired remote file system type.
+	// Currently there is only one implemented choice: an S3Accessor. When you
+	// make a new one of these (by calling NewS3Accessor()), you will provide
+	// all the connection details for accessing your remote file system.
+	Accessor RemoteAccessor
+
+	// CacheData enables caching of remote files that you read locally on disk.
+	// Writes will also be staged on local disk prior to upload.
+	CacheData bool
+
+	// CacheDir is the directory used to cache data if CacheData is true.
+	// (muxfys will try to create this if it doesn't exist). If not supplied
+	// when CacheData is true, muxfys will create a unique temporary directory
+	// in MuxFys' CacheBase directory (these get automatically deleted on
+	// Unmount() - specified CacheDirs do not). Defining this makes CacheData be
+	// treated as true.
+	CacheDir string
+
+	// Write enables write operations in the mount. Only set true if you know
+	// you really need to write. Since writing currently requires caching of
+	// data, CacheData will be treated as true.
+	Write bool
+}
+
+// RemoteAttr struct describes the attributes of a remote file or directory.
+type RemoteAttr struct {
+	Name  string    // Name of the file
+	Size  int64     // Size of the file in bytes
+	MTime time.Time // Time the file was last modified
+	MD5   string    // MD5 checksum of the file (if known)
+}
+
+// RemoteAccessor is the interface used by remote to actually communicate with
+// the remote file system or object store. All of the methods that return an
+// error may be called multiple times if there's a problem, so they should be
+// idempotent.
+type RemoteAccessor interface {
+	// DownloadFile downloads the remote source file to the local dest path.
+	DownloadFile(source, dest string) error
+
+	// UploadFile uploads the local source path to the remote dest path,
+	// recording the given contentType if possible.
+	UploadFile(source, dest, contentType string) error
+
+	// ListEntries returns a slice of all the files and directories in the given
+	// remote directory (or for object stores, all files and directories with a
+	// prefix of dir but excluding those that have an additional forward slash).
+	ListEntries(dir string) ([]RemoteAttr, error)
+
+	// OpenFile opens a remote file ready for reading.
+	OpenFile(path string) (io.ReadCloser, error)
+
+	// Seek should take an object returned by OpenFile() (from the same
+	// RemoteAccessor implementation) and seek to the given offset from the
+	// beginning of the file.
+	Seek(rc io.ReadCloser, offset int64) error
+
+	// CopyFile should do a remote copy of source to dest without involving the
+	// the local file system.
+	CopyFile(source, dest string) error
+
+	// DeleteFile should delete the remote file at the given path.
+	DeleteFile(path string) error
+
+	// ErrorIsNotExists should return true if the supplied error (retrieved from
+	// any of the above methods called on the same RemoteAccessor
+	// implementation) indicates a file not existing.
+	ErrorIsNotExists(err error) bool
+
+	// Target should return a string describing the complete location details of
+	// what the accessor has been configured to access. Eg. it might be a url.
+	// It is only used for logging purposes, to distinguish this Accessor from
+	// others.
+	Target() string
+
+	// RemotePath should return the absolute remote path given a path relative
+	// to the target point the Accessor was originally configured with.
+	RemotePath(relPath string) (absPath string)
+
+	// LocalPath should return a stable non-conflicting absolute path relative
+	// to the given local path for the given absolute remote path. It should
+	// include directories that ensure that different targets with the same
+	// directory structure and files get different local paths. The local path
+	// returned from here will be used to decide where to cache files.
+	LocalPath(baseDir, remotePath string) (localPath string)
+}
+
+// remote struct is used by MuxFys to interact with some remote file system or
+// object store. It embeds a CacheTracker and a RemoteAccessor to do its work.
 type remote struct {
 	*CacheTracker
-	client        *minio.Client
-	host          string
-	bucket        string
-	basePath      string
+	accessor      RemoteAccessor
 	cacheData     bool
 	cacheDir      string
 	cacheIsTmp    bool
-	write         bool
 	maxAttempts   int
+	write         bool
 	clientBackoff *backoff.Backoff
 	log15.Logger
 }
 
+// newRemote creates a remote for use inside MuxFys.
+func newRemote(accessor RemoteAccessor, cacheData bool, cacheDir string, cacheBase string, write bool, maxAttempts int, logger log15.Logger) (r *remote, err error) {
+	// handle cacheData option, creating cache dir if necessary
+	if !cacheData && (cacheDir != "" || write) {
+		cacheData = true
+	}
+
+	if cacheDir != "" {
+		cacheDir, err = homedir.Expand(cacheDir)
+		if err != nil {
+			return
+		}
+		cacheDir, err = filepath.Abs(cacheDir)
+		if err != nil {
+			return
+		}
+		err = os.MkdirAll(cacheDir, os.FileMode(dirMode))
+		if err != nil {
+			return
+		}
+	}
+
+	cacheIsTmp := false
+	if cacheData && cacheDir == "" {
+		// decide on our own cache directory
+		cacheDir, err = ioutil.TempDir(cacheBase, ".muxfys_cache")
+		if err != nil {
+			return
+		}
+		cacheIsTmp = true
+	}
+
+	return &remote{
+		CacheTracker: NewCacheTracker(),
+		accessor:     accessor,
+		cacheData:    cacheData,
+		cacheDir:     cacheDir,
+		cacheIsTmp:   cacheIsTmp,
+		maxAttempts:  maxAttempts,
+		write:        write,
+		clientBackoff: &backoff.Backoff{
+			Min:    100 * time.Millisecond,
+			Max:    10 * time.Second,
+			Factor: 3,
+			Jitter: true,
+		},
+		Logger: logger.New("target", accessor.Target),
+	}, nil
+}
+
+// retryFunc is used as an argument to remote.retry() - the function is retried
+// until it no longer returns an error. The function should be idempotent.
 type retryFunc func() error
 
 // retry attempts to run the given func a number of times until it completes
-// without error. While minio internally does retries, it only does them when it
-// considers the failure to be retryable, whereas we always want to retry to
-// handle more kinds of errors. It logs errors itself. Does not bother retrying
-// when the error is known to be permanent (eg. a requested object not
-// existing).
+// without error. While a RemoteAccessor implementation may do retries
+// internally, it may not do retries in all circumstances, whereas we want to.
+// It logs errors itself. Does not bother retrying when the error indicates a
+// requested file does not exist.
 func (r *remote) retry(clientMethod string, path string, rf retryFunc) fuse.Status {
 	attempts := 0
 	start := time.Now()
@@ -69,8 +206,8 @@ ATTEMPTS:
 		err := rf()
 		if err != nil {
 			// return immediately if key not found
-			if merr, ok := err.(minio.ErrorResponse); ok && merr.Code == "NoSuchKey" {
-				r.Warn("Object doesn't exist", "call", clientMethod, "path", path, "walltime", time.Since(start))
+			if r.accessor.ErrorIsNotExists(err) {
+				r.Warn("File doesn't exist", "call", clientMethod, "path", path, "walltime", time.Since(start))
 				return fuse.ENOENT
 			}
 
@@ -93,8 +230,8 @@ ATTEMPTS:
 // appropriate status and logs any error.
 func (r *remote) statusFromErr(clientMethod string, err error) fuse.Status {
 	if err != nil {
-		if merr, ok := err.(minio.ErrorResponse); ok && merr.Code == "NoSuchKey" {
-			r.Warn("Object didn't exist", "call", clientMethod)
+		if r.accessor.ErrorIsNotExists(err) {
+			r.Warn("File didn't exist", "call", clientMethod)
 			return fuse.ENOENT
 		}
 		r.Error("Remote call failed", "call", clientMethod, "err", err)
@@ -103,10 +240,10 @@ func (r *remote) statusFromErr(clientMethod string, err error) fuse.Status {
 	return fuse.OK
 }
 
-// getRemotePath combines any base path initially configured in Target with the
-// current path, to get the real complete remote path.
+// getRemotePath gets the real complete remote path given the path relative to
+// the configured remote mount point.
 func (r *remote) getRemotePath(relPath string) string {
-	return filepath.Join(r.basePath, relPath)
+	return r.accessor.RemotePath(relPath)
 }
 
 // getLocalPath gets the path to the local cached file when configured with
@@ -114,7 +251,7 @@ func (r *remote) getRemotePath(relPath string) string {
 // getRemotePath). Returns empty string if not in CacheData mode.
 func (r *remote) getLocalPath(remotePath string) string {
 	if r.cacheData {
-		return filepath.Join(r.cacheDir, r.host, r.bucket, remotePath)
+		return r.accessor.LocalPath(r.cacheDir, remotePath)
 	}
 	return ""
 }
@@ -122,8 +259,7 @@ func (r *remote) getLocalPath(remotePath string) string {
 // uploadFile uploads the given local file to the given remote path, with
 // automatic retries on failure.
 func (r *remote) uploadFile(localPath, remotePath string) fuse.Status {
-	// get the file's content type *** don't know if this is important, or if we
-	// can just fake it
+	// get the file's content type
 	file, err := os.Open(localPath)
 	if err != nil {
 		r.Error("Could not open local file", "method", "uploadFile", "path", localPath, "err", err)
@@ -141,10 +277,9 @@ func (r *remote) uploadFile(localPath, remotePath string) fuse.Status {
 
 	// upload, with automatic retries
 	rf := func() error {
-		_, err := r.client.FPutObject(r.bucket, remotePath, localPath, contentType)
-		return err
+		return r.accessor.UploadFile(localPath, remotePath, contentType)
 	}
-	return r.retry("FPutObject", remotePath, rf)
+	return r.retry("UploadFile", remotePath, rf)
 }
 
 // downloadFile downloads the given remote file to the given local path, with
@@ -152,48 +287,40 @@ func (r *remote) uploadFile(localPath, remotePath string) fuse.Status {
 func (r *remote) downloadFile(remotePath, localPath string) fuse.Status {
 	// upload, with automatic retries
 	rf := func() error {
-		return r.client.FGetObject(r.bucket, remotePath, localPath)
+		return r.accessor.DownloadFile(remotePath, localPath)
 	}
-	return r.retry("FGetObject", remotePath, rf)
+	return r.retry("DownloadFile", remotePath, rf)
 }
 
-// findObjects returns details of all objects with the same prefix as the given
-// path, but without "traversing" to deeper "sub-directories". Ie. it's like a
-// directory listing. Returns the details and true if there were no problems
-// getting those details.
-func (r *remote) findObjects(remotePath string) (objects []minio.ObjectInfo, status fuse.Status) {
+// findObjects returns details of all files and directories with the same prefix
+// as the given path, but without "traversing" to deeper "sub-directories". Ie.
+// it's like a directory listing. Returns the details and fuse.OK if there were
+// no problems getting those details.
+func (r *remote) findObjects(remotePath string) (ras []RemoteAttr, status fuse.Status) {
 	// find objects, with automatic retries
 	rf := func() error {
-		doneCh := make(chan struct{})
-		objectCh := r.client.ListObjectsV2(r.bucket, remotePath, false, doneCh)
-		for object := range objectCh {
-			if object.Err != nil {
-				close(doneCh)
-				objects = nil
-				return object.Err
-			}
-			objects = append(objects, object)
-		}
-		return nil
+		var err error
+		ras, err = r.accessor.ListEntries(remotePath)
+		return err
 	}
-	status = r.retry("ListObjectsV2", remotePath, rf)
+	status = r.retry("ListEntries", remotePath, rf)
 	return
 }
 
-// getObject gets the object representing a remote file, ready to be read from.
-// Optionally also seek within it first (to the given number of bytes from the
-// start of the file).
-func (r *remote) getObject(remotePath string, offset int64) (object *minio.Object, status fuse.Status) {
+// getObject gets the object representing an opened remote file, ready to be
+// read from. Optionally also seek within it first (to the given number of bytes
+// from the start of the file).
+func (r *remote) getObject(remotePath string, offset int64) (object io.ReadCloser, status fuse.Status) {
 	// get object and seek, with automatic retries
 	rf := func() error {
 		var err error
-		object, err = r.client.GetObject(r.bucket, remotePath)
+		object, err = r.accessor.OpenFile(remotePath)
 		if err != nil {
 			return err
 		}
 
 		if offset > 0 {
-			_, err = object.Seek(offset, io.SeekStart)
+			err = r.accessor.Seek(object, offset)
 			if err != nil {
 				return err
 			}
@@ -201,7 +328,7 @@ func (r *remote) getObject(remotePath string, offset int64) (object *minio.Objec
 
 		return nil
 	}
-	status = r.retry("GetObject/Seek", remotePath, rf)
+	status = r.retry("OpenFile/Seek", remotePath, rf)
 	return
 }
 
@@ -210,31 +337,32 @@ func (r *remote) getObject(remotePath string, offset int64) (object *minio.Objec
 // attempts will be made which involves creating a new object, which is why
 // remotePath must be supplied, and why you get back an object. This will be the
 // same object you supplied if there were no problems.
-func (r *remote) seek(rc io.ReadCloser, offset int64, remotePath string) (*minio.Object, fuse.Status) {
-	object := rc.(*minio.Object)
-	_, err := object.Seek(offset, io.SeekStart)
+func (r *remote) seek(rc io.ReadCloser, offset int64, remotePath string) (io.ReadCloser, fuse.Status) {
+	err := r.accessor.Seek(rc, offset)
 	if err != nil {
 		return r.getObject(remotePath, offset)
 	}
-	return object, fuse.OK
+	return rc, fuse.OK
 }
 
-// copyObject remotely copies an object to a new remote path.
-func (r *remote) copyObject(oldPath, newPath string) fuse.Status {
+// copyFile remotely copies a file to a new remote path. oldPath is treated
+// as a relative path to where this remote was targeted (excluding bucket),
+// while newPath is treated as an absolute path (including bucket).
+func (r *remote) copyFile(oldPath, newPath string) fuse.Status {
 	// copy, with automatic retries
 	rf := func() error {
-		return r.client.CopyObject(r.bucket, newPath, r.bucket+"/"+oldPath, minio.CopyConditions{})
+		return r.accessor.CopyFile(oldPath, newPath)
 	}
-	return r.retry("CopyObject", oldPath, rf)
+	return r.retry("CopyFile", oldPath, rf)
 }
 
 // deleteFile deletes the given remote file.
 func (r *remote) deleteFile(remotePath string) fuse.Status {
 	// delete, with automatic retries
 	rf := func() error {
-		return r.client.RemoveObject(r.bucket, remotePath)
+		return r.accessor.DeleteFile(remotePath)
 	}
-	return r.retry("RemoveObject", remotePath, rf)
+	return r.retry("DeleteFile", remotePath, rf)
 }
 
 // deleteCache physically deletes the whole cache directory and erases our

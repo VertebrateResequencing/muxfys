@@ -169,13 +169,13 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 
 	var isDir bool
 	for _, object := range objects {
-		if object.Key == name {
+		if object.Name == name {
 			continue
 		}
 		isDir = true
 
 		d := fuse.DirEntry{
-			Name: object.Key[len(remotePath):],
+			Name: object.Name[len(remotePath):],
 		}
 		if d.Name == "" {
 			continue
@@ -190,7 +190,7 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 		} else {
 			d.Mode = uint32(fuse.S_IFREG)
 			thisPath := filepath.Join(name, d.Name)
-			mTime := uint64(object.LastModified.Unix())
+			mTime := uint64(object.MTime.Unix())
 			attr := &fuse.Attr{
 				Mode:  fuse.S_IFREG | uint32(fileMode),
 				Size:  uint64(object.Size),
@@ -205,8 +205,8 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 		fs.mutex.Unlock()
 
 		// for efficiency, instead of breaking here, we'll keep looping and
-		// cache all the dir contents; this does mean we'll never see new
-		// entries for this dir in the future
+		// cache all the dir contents; this does mean we'll never see externally
+		// added new entries for this dir in the future
 	}
 	status = fuse.OK
 
@@ -229,7 +229,7 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 // already have been stat'ed (eg. with a GetAttr() call), or we report the file
 // doesn't exist. context is not currently used. If CacheData has been
 // configured, we defer to openCached(). Otherwise the real implementation is in
-// S3File.
+// RemoteFile.
 func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, status fuse.Status) {
 	checkWritable := false
 	if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {
@@ -243,7 +243,7 @@ func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file n
 	if r.cacheData {
 		file, status = fs.openCached(r, name, flags, context, attr)
 	} else {
-		file = NewS3File(r, r.getRemotePath(name), attr.Size)
+		file = newRemoteFile(r, r.getRemotePath(name), attr.Size)
 	}
 
 	if !r.write || (int(flags)&os.O_WRONLY == 0 && int(flags)&os.O_RDWR == 0) {
@@ -373,7 +373,7 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 	}
 
 	fmutex.Unlock()
-	return NewCachedFile(r, remotePath, localPath, attr, flags, fs.Logger), fuse.OK
+	return newCachedFile(r, remotePath, localPath, attr, flags, fs.Logger), fuse.OK
 }
 
 // Chmod is ignored.
@@ -575,7 +575,7 @@ func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 	if fs.writeRemote.cacheData {
 		localPath := fs.writeRemote.getLocalPath(remotePath)
 
-		// make all the parent directories. *** we use our dirMode constant here
+		// make all the parent directories. We use our dirMode constant here
 		// instead of the supplied mode because of strange permission problems
 		// using the latter, and because it doesn't matter what permissions the
 		// user wants for the dir - this is for a user-only cache
@@ -687,7 +687,7 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 		}
 	} else {
 		// first trigger a remote copy of oldPath to newPath
-		status := fs.writeRemote.copyObject(remotePathOld, remotePathNew)
+		status := fs.writeRemote.copyFile(remotePathOld, remotePathNew)
 		if status != fuse.OK {
 			return status
 		}
@@ -733,8 +733,8 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 	return fuse.ENOSYS
 }
 
-// Unlink deletes a file from the remote S3 bucket, as well as any locally
-// cached copy. context is not currently used.
+// Unlink deletes a file from the remote system, as well as any locally cached
+// copy. context is not currently used.
 func (fs *MuxFys) Unlink(name string, context *fuse.Context) fuse.Status {
 	_, r, status := fs.fileDetails(name, true)
 	if status != fuse.OK {
@@ -818,14 +818,14 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 		fs.createdFiles[name] = true
 		fs.mutex.Unlock()
 
-		return NewCachedFile(r, remotePath, localPath, attr, uint32(int(flags)|os.O_CREATE), fs.Logger), fuse.ToStatus(err)
+		return newCachedFile(r, remotePath, localPath, attr, uint32(int(flags)|os.O_CREATE), fs.Logger), fuse.ToStatus(err)
 	}
 	return nil, fuse.ENOSYS
 }
 
 // addNewEntryToItsDir adds a DirEntry for the file/dir named name to that
 // object's containing directory entries. mode should be fuse.S_IFREG or
-// fuse.S_IFDIR
+// fuse.S_IFDIR.
 func (fs *MuxFys) addNewEntryToItsDir(name string, mode int) {
 	d := fuse.DirEntry{
 		Name: filepath.Base(name),

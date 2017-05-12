@@ -1,10 +1,5 @@
 // Copyright © 2017 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
-// The target parsing code in this file is based on code in
-// https://github.com/minio/minfs Copyright 2016 Minio, Inc.
-// licensed under the Apache License, Version 2.0 (the "License"), stating:
-// "You may not use this file except in compliance with the License. You may
-// obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0"
 //
 //  This file is part of muxfys.
 //
@@ -51,29 +46,44 @@ S3 buckets.
 
     import "github.com/VertebrateResequencing/wr/muxfys"
 
-    // fully manual target configuration
-    target1 := &muxfys.Target{
-        Target:     "https://s3.amazonaws.com/mybucket/subdir",
-        Region:     "us-east-1",
-        AccessKey:  os.Getenv("AWS_ACCESS_KEY_ID"),
-        SecretKey:  os.Getenv("AWS_SECRET_ACCESS_KEY"),
-        CacheDir:   "/tmp/muxfys/cache",
-        Write:      true,
+    // fully manual S3 configuration
+    accessorConfig := &muxfys.S3Config{
+        Target:    "https://s3.amazonaws.com/mybucket/subdir",
+        Region:    "us-east-1",
+        AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
+        SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+    }
+    accessor, err := muxfys.NewS3Accessor(accessorConfig)
+    if err != nil {
+        log.Fatal(err)
+    }
+    remoteConfig1 := &muxfys.RemoteConfig{
+        Accessor: accessor,
+        CacheDir: "/tmp/muxfys/cache",
+        Write:    true,
     }
 
-    // or read some configuration from standard AWS S3 config files and
-    // environment variables
-    target2 := &muxfys.Target{
+    // or read configuration from standard AWS S3 config files and environment
+    // variables
+    accessorConfig, err = muxfys.S3ConfigFromEnvironment("default",
+        "myotherbucket/another/subdir")
+    if err != nil {
+        log.Fatalf("could not read config from environment: %s\n", err)
+    }
+    accessor, err = muxfys.NewS3Accessor(accessorConfig)
+    if err != nil {
+        log.Fatal(err)
+    }
+    remoteConfig2 := &muxfys.RemoteConfig{
+        Accessor:  accessor,
         CacheData: true,
     }
-    target2.ReadEnvironment("default", "myotherbucket/another/subdir")
 
     cfg := &muxfys.Config{
-        Mount: "/tmp/muxfys/mount",
+        Mount:     "/tmp/muxfys/mount",
         CacheBase: "/tmp",
-        Retries:    3,
-        Verbose:    true,
-        Targets:    []*muxfys.Target{target, target2},
+        Retries:   3,
+        Verbose:   true,
     }
 
     fs, err := muxfys.New(cfg)
@@ -81,7 +91,7 @@ S3 buckets.
         log.Fatalf("bad configuration: %s\n", err)
     }
 
-    err = fs.Mount()
+    err = fs.Mount(remoteConfig, remoteConfig2)
     if err != nil {
         log.Fatalf("could not mount: %s\n", err)
     }
@@ -97,42 +107,40 @@ S3 buckets.
     }
 
     logs := fs.Logs()
+
+# Extending
+
+To add support for a new kind of remote file system or object store, simply
+implement the RemoteAccessor interface and supply an instance of that to
+RemoteConfig.
 */
 package muxfys
 
 import (
-	"bufio"
 	"fmt"
-	"github.com/go-ini/ini"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
 	"github.com/inconshreveable/log15"
-	"github.com/jpillora/backoff"
-	"github.com/minio/minio-go"
 	"github.com/mitchellh/go-homedir"
 	"github.com/sb10/l15h"
 	"io/ioutil"
-	"net/url"
 	"os"
 	"os/signal"
 	"os/user"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
 
 const (
-	defaultDomain = "s3.amazonaws.com"
-	dirMode       = 0700
-	fileMode      = 0600
-	dirSize       = uint64(4096)
-	symlinkSize   = uint64(7)
+	dirMode     = 0700
+	fileMode    = 0600
+	dirSize     = uint64(4096)
+	symlinkSize = uint64(7)
 )
 
 var (
@@ -153,294 +161,26 @@ type Config struct {
 	// empty.
 	Mount string
 
-	// Retries is the number of times to automatically retry failed remote S3
+	// Retries is the number of times to automatically retry failed remote
 	// system requests. The default of 0 means don't retry; at least 3 is
 	// recommended.
 	Retries int
 
-	// CacheBase is the base directory that will be used to create any Target
-	// cache directories, when those Targets have CacheData true but CacheDir
-	// undefined. Defaults to the current working directory.
+	// CacheBase is the base directory that will be used to create cache
+	// directories when a RemoteConfig that you Mount() has CacheData true but
+	// CacheDir undefined. Defaults to the current working directory.
 	CacheBase string
 
 	// Verbose results in every remote request getting an entry in the output of
 	// Logs(). Errors always appear there.
 	Verbose bool
-
-	// Targets is a slice of Target, describing what you want to mount and
-	// allowing you to multiplex more than one bucket/ sub directory on to
-	// Mount. Only 1 of these Target can be writeable.
-	Targets []*Target
-}
-
-// Target struct provides details of the remote target (S3 bucket) you wish to
-// mount, and particulars about caching and writing for this target.
-type Target struct {
-	// The full URL of your bucket and possible sub-path, eg.
-	// https://cog.domain.com/bucket/subpath. For performance reasons, you
-	// should specify the deepest subpath that holds all your files. This will
-	// be set for you by a call to ReadEnvironment().
-	Target string
-
-	// Region is optional if you need to use a specific region. This can be set
-	// for you by a call to ReadEnvironment().
-	Region string
-
-	// AccessKey and SecretKey can be set for you by calling ReadEnvironment().
-	AccessKey string
-	SecretKey string
-
-	// CacheData enables caching of remote files that you read locally on disk.
-	// Writes will also be staged on local disk prior to upload.
-	CacheData bool
-
-	// CacheDir is the directory used to cache data if CacheData is true.
-	// (muxfys will try to create this if it doesn't exist). If not supplied
-	// when CacheData is true, muxfys will create a unique temporary directory
-	// in the CacheBase directory of the containing Config (these get
-	// automatically deleted on Unmount() - specified CacheDirs do not).
-	// Defining this makes CacheData be treated as true.
-	CacheDir string
-
-	// Write enables write operations in the mount. Only set true if you know
-	// you really need to write. Since writing currently requires caching of
-	// data, CacheData will be treated as true.
-	Write bool
-}
-
-// ReadEnvironment sets Target, AccessKey and SecretKey and possibly Region. It
-// determines these by looking primarily at the given profile section of
-// ~/.s3cfg (s3cmd's config file). If profile is an empty string, it comes from
-// $AWS_DEFAULT_PROFILE or $AWS_PROFILE or defaults to "default". If ~/.s3cfg
-// doesn't exist or isn't fully specified, missing values will be taken from the
-// file pointed to by $AWS_SHARED_CREDENTIALS_FILE, or ~/.aws/credentials (in
-// the AWS CLI format) if that is not set. If this file also doesn't exist,
-// ~/.awssecret (in the format used by s3fs) is used instead. AccessKey and
-// SecretKey values will always preferably come from $AWS_ACCESS_KEY_ID and
-// $AWS_SECRET_ACCESS_KEY respectively, if those are set. If no config file
-// specified host_base, the default domain used is s3.amazonaws.com. Region is
-// set by the $AWS_DEFAULT_REGION environment variable, or if that is not set,
-// by checking the file pointed to by $AWS_CONFIG_FILE (~/.aws/config if unset).
-// To allow the use of a single configuration file, users can create a non-
-// standard file that specifies all relevant options: use_https, host_base,
-// region, access_key (or aws_access_key_id) and secret_key (or
-// aws_secret_access_key) (saved in any of the files except ~/.awssecret). The
-// path argument should at least be the bucket name, but ideally should also
-// specify the deepest subpath that holds all the files that need to be
-// accessed. Because reading from a public s3.amazonaws.com bucket requires no
-// credentials, no error is raised on failure to find any values in the
-// environment when profile is supplied as an empty string.
-func (t *Target) ReadEnvironment(profile, path string) error {
-	if path == "" {
-		return fmt.Errorf("muxfys ReadEnvironment() requires a path")
-	}
-
-	profileSpecified := true
-	if profile == "" {
-		if profile = os.Getenv("AWS_DEFAULT_PROFILE"); profile == "" {
-			if profile = os.Getenv("AWS_PROFILE"); profile == "" {
-				profile = "default"
-				profileSpecified = false
-			}
-		}
-	}
-
-	s3cfg, err := homedir.Expand("~/.s3cfg")
-	if err != nil {
-		return err
-	}
-	ascf, err := homedir.Expand(os.Getenv("AWS_SHARED_CREDENTIALS_FILE"))
-	if err != nil {
-		return err
-	}
-	acred, err := homedir.Expand("~/.aws/credentials")
-	if err != nil {
-		return err
-	}
-	aconf, err := homedir.Expand(os.Getenv("AWS_CONFIG_FILE"))
-	if err != nil {
-		return err
-	}
-	acon, err := homedir.Expand("~/.aws/config")
-	if err != nil {
-		return err
-	}
-
-	aws, err := ini.LooseLoad(s3cfg, ascf, acred, aconf, acon)
-	if err != nil {
-		return fmt.Errorf("muxfys ReadEnvironment() loose loading of config files failed: %s", err)
-	}
-
-	var domain, key, secret, region string
-	var https bool
-	section, err := aws.GetSection(profile)
-	if err == nil {
-		https = section.Key("use_https").MustBool(false)
-		domain = section.Key("host_base").String()
-		region = section.Key("region").String()
-		key = section.Key("access_key").MustString(section.Key("aws_access_key_id").MustString(os.Getenv("AWS_ACCESS_KEY_ID")))
-		secret = section.Key("secret_key").MustString(section.Key("aws_secret_access_key").MustString(os.Getenv("AWS_SECRET_ACCESS_KEY")))
-	} else if profileSpecified {
-		return fmt.Errorf("muxfys ReadEnvironment(%s) called, but no config files defined that profile", profile)
-	}
-
-	if key == "" && secret == "" {
-		// last resort, check ~/.awssecret
-		awsSec, err := homedir.Expand("~/.awssecret")
-		if err != nil {
-			return err
-		}
-		if file, err := os.Open(awsSec); err == nil {
-			defer file.Close()
-
-			scanner := bufio.NewScanner(file)
-			if scanner.Scan() {
-				line := scanner.Text()
-				if line != "" {
-					line = strings.TrimSuffix(line, "\n")
-					ks := strings.Split(line, ":")
-					if len(ks) == 2 {
-						key = ks[0]
-						secret = ks[1]
-					}
-				}
-			}
-		}
-	}
-
-	if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-		key = os.Getenv("AWS_ACCESS_KEY_ID")
-	}
-	if os.Getenv("AWS_SECRET_ACCESS_KEY") != "" {
-		secret = os.Getenv("AWS_SECRET_ACCESS_KEY")
-	}
-	t.AccessKey = key
-	t.SecretKey = secret
-
-	if domain == "" {
-		domain = defaultDomain
-	}
-
-	scheme := "http"
-	if https {
-		scheme += "s"
-	}
-	u := &url.URL{
-		Scheme: scheme,
-		Host:   domain,
-		Path:   path,
-	}
-	t.Target = u.String()
-
-	if os.Getenv("AWS_DEFAULT_REGION") != "" {
-		t.Region = os.Getenv("AWS_DEFAULT_REGION")
-	} else if region != "" {
-		t.Region = region
-	}
-
-	return nil
-}
-
-// CreateRemote uses the configured details of the Target to create a *remote,
-// used internally by MuxFys.New().
-func (t *Target) CreateRemote(cacheBase string, maxAttempts int, logger log15.Logger) (r *remote, err error) {
-	// parse the target to get secure, host, bucket and basePath
-	if t.Target == "" {
-		return nil, fmt.Errorf("no Target defined")
-	}
-
-	u, err := url.Parse(t.Target)
-	if err != nil {
-		return
-	}
-
-	var secure bool
-	if strings.HasPrefix(t.Target, "https") {
-		secure = true
-	}
-
-	host := u.Host
-	var bucket, basePath string
-	if len(u.Path) > 1 {
-		parts := strings.Split(u.Path[1:], "/")
-		if len(parts) >= 0 {
-			bucket = parts[0]
-		}
-		if len(parts) >= 1 {
-			basePath = path.Join(parts[1:]...)
-		}
-	}
-
-	if bucket == "" {
-		return nil, fmt.Errorf("no bucket could be determined from [%s]", t.Target)
-	}
-
-	// handle CacheData option, creating cache dir if necessary
-	var cacheData bool
-	if t.CacheData || t.CacheDir != "" || t.Write {
-		cacheData = true
-	}
-
-	cacheDir := t.CacheDir
-	if cacheDir != "" {
-		cacheDir, err = homedir.Expand(cacheDir)
-		if err != nil {
-			return
-		}
-		cacheDir, err = filepath.Abs(cacheDir)
-		if err != nil {
-			return
-		}
-		err = os.MkdirAll(cacheDir, os.FileMode(dirMode))
-		if err != nil {
-			return
-		}
-	}
-
-	deleteCache := false
-	if cacheData && cacheDir == "" {
-		// decide on our own cache directory
-		cacheDir, err = ioutil.TempDir(cacheBase, ".muxfys_cache")
-		if err != nil {
-			return
-		}
-		deleteCache = true
-	}
-
-	r = &remote{
-		CacheTracker: NewCacheTracker(),
-		host:         host,
-		bucket:       bucket,
-		basePath:     basePath,
-		cacheData:    cacheData,
-		cacheDir:     cacheDir,
-		cacheIsTmp:   deleteCache,
-		write:        t.Write,
-		maxAttempts:  maxAttempts,
-		Logger:       logger.New("target", t.Target),
-	}
-
-	r.clientBackoff = &backoff.Backoff{
-		Min:    100 * time.Millisecond,
-		Max:    10 * time.Second,
-		Factor: 3,
-		Jitter: true,
-	}
-
-	// create a client for interacting with S3 (we do this here instead of
-	// as-needed inside remote because there's large overhead in creating these)
-	if t.Region != "" {
-		r.client, err = minio.NewWithRegion(host, t.AccessKey, t.SecretKey, secure, t.Region)
-	} else {
-		r.client, err = minio.New(host, t.AccessKey, t.SecretKey, secure)
-	}
-	return
 }
 
 // MuxFys struct is the main filey system object.
 type MuxFys struct {
 	pathfs.FileSystem
 	mountPoint      string
+	cacheBase       string
 	dirAttr         *fuse.Attr
 	server          *fuse.Server
 	mutex           sync.Mutex
@@ -456,19 +196,16 @@ type MuxFys struct {
 	ignoreSignals   chan bool
 	remotes         []*remote
 	writeRemote     *remote
+	maxAttempts     int
 	logStore        *l15h.Store
 	log15.Logger
 }
 
-// New returns a MuxFys that you'll use to Mount() your S3 bucket(s), ensure you
-// un-mount if killed by calling UnmountOnDeath(), then Unmount() when you're
-// done. You might check Logs() afterwards. The other methods of MuxFys can be
-// ignored in most cases.
+// New returns a MuxFys that you'll use to Mount() your remote file systems or
+// object stores, ensure you un-mount if killed by calling UnmountOnDeath(),
+// then Unmount() when you're done. You might check Logs() afterwards. The other
+// methods of MuxFys can be ignored in most cases.
 func New(config *Config) (fs *MuxFys, err error) {
-	if len(config.Targets) == 0 {
-		return nil, fmt.Errorf("no targets provided")
-	}
-
 	mountPoint := config.Mount
 	if mountPoint == "" {
 		mountPoint = "mnt"
@@ -520,34 +257,19 @@ func New(config *Config) (fs *MuxFys, err error) {
 	fs = &MuxFys{
 		FileSystem:   pathfs.NewDefaultFileSystem(),
 		mountPoint:   mountPoint,
+		cacheBase:    cacheBase,
 		dirs:         make(map[string][]*remote),
 		dirContents:  make(map[string][]fuse.DirEntry),
 		files:        make(map[string]*fuse.Attr),
 		fileToRemote: make(map[string]*remote),
 		createdFiles: make(map[string]bool),
 		createdDirs:  make(map[string]bool),
+		maxAttempts:  config.Retries + 1,
 		logStore:     store,
 		Logger:       logger,
 	}
 
-	// create a remote for every Target
-	for _, t := range config.Targets {
-		var r *remote
-		r, err = t.CreateRemote(cacheBase, config.Retries+1, logger)
-		if err != nil {
-			return
-		}
-
-		fs.remotes = append(fs.remotes, r)
-		if r.write {
-			if fs.writeRemote != nil {
-				return nil, fmt.Errorf("you can't have more than one writeable target")
-			}
-			fs.writeRemote = r
-		}
-	}
-
-	// cheats for s3-like filesystems
+	// we'll always use the same attributes for our directories
 	mTime := uint64(time.Now().Unix())
 	fs.dirAttr = &fuse.Attr{
 		Size:  dirSize,
@@ -560,15 +282,46 @@ func New(config *Config) (fs *MuxFys, err error) {
 	return
 }
 
-// Mount carries out the mounting of your configured S3 bucket to your
-// configured mount point. On return, the files in your bucket will be
-// accessible. Once mounted, you can't mount again until you Unmount().
-func (fs *MuxFys) Mount() (err error) {
+// Mount carries out the mounting of your supplied RemoteConfigs to your
+// configured mount point. On return, the files in your remote(s) will be
+// accessible.
+//
+// Once mounted, you can't mount again until you Unmount().
+//
+// If more than 1 RemoteConfig is supplied, the remotes will become multiplexed:
+// your mount point will show the combined contents of all your remote systems.
+// If multiple remotes have a directory with the same name, that directory's
+// contents will in in turn show the contents of all those directories. If
+// multiple remotes have a file with the same name in the same directory, reads
+// will come from the first remote you configured that has that file.
+func (fs *MuxFys) Mount(rcs ...*RemoteConfig) (err error) {
+	if len(rcs) == 0 {
+		err = fmt.Errorf("At least one RemoteConfig must be supplied")
+		return
+	}
+
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 	if fs.mounted {
-		err = fmt.Errorf("Can't mount more that once at a time\n")
+		err = fmt.Errorf("Can't mount more that once at a time")
 		return
+	}
+
+	// create a remote for every RemoteConfig
+	for _, c := range rcs {
+		var r *remote
+		r, err = newRemote(c.Accessor, c.CacheData, c.CacheDir, fs.cacheBase, c.Write, fs.maxAttempts, fs.Logger)
+		if err != nil {
+			return
+		}
+
+		fs.remotes = append(fs.remotes, r)
+		if r.write {
+			if fs.writeRemote != nil {
+				return fmt.Errorf("You can't have more than one writeable remote")
+			}
+			fs.writeRemote = r
+		}
 	}
 
 	uid, gid, err := userAndGroup()
@@ -586,7 +339,7 @@ func (fs *MuxFys) Mount() (err error) {
 		},
 		Debug: false,
 	}
-	pathFsOpts := &pathfs.PathNodeFsOptions{ClientInodes: false}
+	pathFsOpts := &pathfs.PathNodeFsOptions{ClientInodes: false} // false means we can't hardlink, but our inodes are stable *** does it matter if they're unstable?
 	pathFs := pathfs.NewPathNodeFs(fs, pathFsOpts)
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
 	mOpts := &fuse.MountOptions{
@@ -672,13 +425,18 @@ func (fs *MuxFys) UnmountOnDeath() {
 	}()
 }
 
-// Unmount must be called when you're done reading from/ writing to your bucket.
-// Be sure to close any open filehandles before hand! It's a good idea to defer
-// this after calling Mount(), and possibly also call UnmountOnDeath(). In
-// CacheData mode, it is only at Unmount() that any files you created or altered
-// get uploaded, so this may take some time. You can optionally supply a bool
-// which if true prevents any uploads. If a target was not configured with a
-// specific CacheDir but CacheData was true, the CacheDir will be deleted.
+// Unmount must be called when you're done reading from/ writing to your
+// remotes. Be sure to close any open filehandles before hand!
+//
+// It's a good idea to defer this after calling Mount(), and possibly also call
+// UnmountOnDeath().
+//
+// In CacheData mode, it is only at Unmount() that any files you created or
+// altered get uploaded, so this may take some time. You can optionally supply a
+// bool which if true prevents any uploads.
+//
+// If a remote was not configured with a specific CacheDir but CacheData was
+// true, the CacheDir will be deleted.
 func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
@@ -721,6 +479,10 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 	fs.fileToRemote = make(map[string]*remote)
 	fs.createdFiles = make(map[string]bool)
 	fs.createdDirs = make(map[string]bool)
+
+	// forget our remotes so we can be remounted with other remotes
+	fs.remotes = nil
+	fs.writeRemote = nil
 
 	return
 }
@@ -765,92 +527,26 @@ func (fs *MuxFys) uploadCreated() error {
 }
 
 // Logs returns messages generated while mounted; you might call it after
-// Unmount() to see how things went. By default these will only be errors that
-// occurred, but if this MuxFys was configured with Verbose on, it will also
-// contain informational and warning messages. If the muxfys package was
-// configured with a log Handler (see SetLogHandler()), these same messages
-// would have been logged as they occurred.
+// Unmount() to see how things went.
+//
+// By default these will only be errors that occurred, but if this MuxFys was
+// configured with Verbose on, it will also contain informational and warning
+// messages.
+//
+// If the muxfys package was configured with a log Handler (see
+// SetLogHandler()), these same messages would have been logged as they
+// occurred.
 func (fs *MuxFys) Logs() []string {
 	return fs.logStore.Logs()
 }
 
 // SetLogHandler defines how log messages (globally for this package) are
 // logged. Logs are always retrievable as strings from individual MuxFys
-// instances using MuxFys.Logs(), but otherwise by default are discarded. To
-// have them logged somewhere as they are emitted, supply a
-// github.com/inconshreveable/log15 Handler, eg. log15.StderrHandler to log
-// everything to STDERR.
+// instances using MuxFys.Logs(), but otherwise by default are discarded.
+//
+// To have them logged somewhere as they are emitted, supply a
+// github.com/inconshreveable/log15.Handler. For example, supplying
+// log15.StderrHandler would log everything to STDERR.
 func SetLogHandler(h log15.Handler) {
 	logHandlerSetter.SetHandler(h)
-}
-
-// CacheTracker struct is used to track what parts of which files have been
-// cached.
-type CacheTracker struct {
-	sync.Mutex
-	cached map[string]Intervals
-}
-
-// NewCacheTracker creates a new *CacheTracker.
-func NewCacheTracker() *CacheTracker {
-	return &CacheTracker{cached: make(map[string]Intervals)}
-}
-
-// Cached updates the tracker with what you have now cached. Once you have
-// stored bytes 0..9 in /abs/path/to/sparse.file, you would call:
-// Cached("/abs/path/to/sparse.file", NewInterval(0, 10)).
-func (c *CacheTracker) Cached(path string, iv Interval) {
-	c.Lock()
-	defer c.Unlock()
-	c.cached[path] = c.cached[path].Merge(iv)
-}
-
-// Uncached tells you what parts of a file in the given interval you haven't
-// already cached (based on your prior Cached() calls). You would want to then
-// cache the data in each of the returned intervals and call Cached() on each
-// one afterwards.
-func (c *CacheTracker) Uncached(path string, iv Interval) Intervals {
-	c.Lock()
-	defer c.Unlock()
-	return c.cached[path].Difference(iv)
-}
-
-// CacheTruncate should be used to update the tracker if you truncate a cache
-// file. The internal knowledge of what you have cached for that file will then
-// be updated to exclude anything beyond the truncation point.
-func (c *CacheTracker) CacheTruncate(path string, offset int64) {
-	c.Lock()
-	defer c.Unlock()
-	c.cached[path] = c.cached[path].Truncate(offset)
-}
-
-// CacheOverride should be used if you do something like delete a cache file and
-// then recreate it and cache some data inside it. This is the slightly more
-// efficient alternative to calling Delete(path) followed by Cached(path, iv).
-func (c *CacheTracker) CacheOverride(path string, iv Interval) {
-	c.Lock()
-	defer c.Unlock()
-	c.cached[path] = Intervals{iv}
-}
-
-// CacheRename should be used if you rename a cache file on disk.
-func (c *CacheTracker) CacheRename(oldPath, newPath string) {
-	c.Lock()
-	defer c.Unlock()
-	c.cached[newPath] = c.cached[oldPath]
-	delete(c.cached, oldPath)
-}
-
-// CacheDelete should be used if you delete a cache file.
-func (c *CacheTracker) CacheDelete(path string) {
-	c.Lock()
-	defer c.Unlock()
-	delete(c.cached, path)
-}
-
-// CacheWipe should be used if you delete all your cache files.
-func (c *CacheTracker) CacheWipe() {
-	c.Lock()
-	defer c.Unlock()
-	c.cached = make(map[string]Intervals)
 }

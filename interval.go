@@ -22,8 +22,7 @@
 package muxfys
 
 /*
-This file implements the interval-related code used by NewCachedFile to
-track which byte intervals have already been downloaded.
+This file implements the interval-related code used by CacheTracker.
 
 Standard algorithms exist for merging or querying sets of intervals, eg.
 http://www.geeksforgeeks.org/merging-intervals/ describes the commonly used sort
