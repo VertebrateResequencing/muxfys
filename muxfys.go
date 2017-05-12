@@ -32,11 +32,14 @@ directories of the same bucket) on the same local directory. This makes commands
 you want to run against the files in your buckets much simpler, eg. instead of
 mounting s3://publicbucket, s3://myinputbucket and s3://myoutputbucket to
 separate mount points and running:
-$ myexe -ref /mnt/publicbucket/refs/human/ref.fa -i /mnt/myinputbucket/xyz/123/
-  input.file > /mnt/myoutputbucket/xyz/123/output.file
+
+ $ myexe -ref /mnt/publicbucket/refs/human/ref.fa -i /mnt/myinputbucket/xyz/123/
+   input.file > /mnt/myoutputbucket/xyz/123/output.file
+
 You could multiplex the 3 buckets (at the desired paths) on to the directory you
 will work from and just run:
-$ myexe -ref ref.fa -i input.file > output.file
+
+ $ myexe -ref ref.fa -i input.file > output.file
 
 When using muxfys, you 1) mount, 2) do something that needs the files in your S3
 bucket(s), 3) unmount. Then repeat 1-3 for other things that need data in your
