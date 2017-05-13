@@ -147,32 +147,37 @@ func TestS3Localntegration(t *testing.T) {
 	os.Setenv("MINIO_SECRET_KEY", secretKey)
 	os.Setenv("MINIO_BROWSER", "off")
 	minioCmd := exec.Command("minio", "server", "--address", fmt.Sprintf("localhost:%s", port), minioDir)
-	go func() {
-		<-time.After(30 * time.Second)
-		minioCmd.Process.Kill()
-		minioCmd.Wait()
-	}()
-	out, err := minioCmd.CombinedOutput()
-	fmt.Println(string(out))
-	fmt.Println(err.Error())
-	fmt.Println(target)
-	// err = minioCmd.Start()
-	// if err != nil {
-	// 	log.Panic(err)
-	// }
-	// defer func() {
+
+	// if all tests accessing what minio server is supposed to serve fail, debug
+	// minio's startup:
+	// go func() {
+	// 	<-time.After(30 * time.Second)
 	// 	minioCmd.Process.Kill()
 	// 	minioCmd.Wait()
 	// }()
+	// out, err := minioCmd.CombinedOutput()
+	// fmt.Println(string(out))
+	// fmt.Println(err.Error())
+	// fmt.Println(target)
+	// return
 
-	// // give it time to become ready to respond to accesses
-	// if os.Getenv("CI") == "true" {
-	// 	<-time.After(60 * time.Second)
-	// } else {
-	// 	<-time.After(2 * time.Second)
-	// }
+	err = minioCmd.Start()
+	if err != nil {
+		log.Panic(err)
+	}
+	defer func() {
+		minioCmd.Process.Kill()
+		minioCmd.Wait()
+	}()
 
-	// s3IntegrationTests(t, tmpdir, target, accessKey, secretKey, bigFileSize, false)
+	// give it time to become ready to respond to accesses
+	if os.Getenv("CI") == "true" {
+		<-time.After(60 * time.Second)
+	} else {
+		<-time.After(2 * time.Second)
+	}
+
+	s3IntegrationTests(t, tmpdir, target, accessKey, secretKey, bigFileSize, false)
 }
 
 func TestS3RemoteIntegration(t *testing.T) {
