@@ -4,6 +4,9 @@ go:
   - master
 before_install:
   - go get github.com/mattn/goveralls
+before_script:
+  - go get github.com/minio/minio
+  - export PATH=$PATH:$HOME/gopath/bin
 script:
   - go test -v -coverprofile=muxfys.coverprofile -covermode count .
-  - $HOME/gopath/bin/goveralls -coverprofile=muxfys.coverprofile -service travis-ci
+  - goveralls -coverprofile=muxfys.coverprofile -service travis-ci
