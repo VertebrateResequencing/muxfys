@@ -172,7 +172,7 @@ func TestS3Localntegration(t *testing.T) {
 
 	// give it time to become ready to respond to accesses
 	if os.Getenv("CI") == "true" {
-		<-time.After(60 * time.Second)
+		<-time.After(15 * time.Second)
 	} else {
 		<-time.After(2 * time.Second)
 	}
