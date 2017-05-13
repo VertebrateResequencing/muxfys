@@ -7,6 +7,7 @@ before_install:
   - sudo modprobe fuse
   - sudo chmod 666 /dev/fuse
   - sudo chown root:$USER /etc/fuse.conf
+  - sudo sed -i '/user_allow_other/s/^#//g' /etc/fuse.conf
   - go get github.com/mattn/goveralls
 before_script:
   - go get github.com/minio/minio
