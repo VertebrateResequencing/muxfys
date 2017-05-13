@@ -229,7 +229,7 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 // already have been stat'ed (eg. with a GetAttr() call), or we report the file
 // doesn't exist. context is not currently used. If CacheData has been
 // configured, we defer to openCached(). Otherwise the real implementation is in
-// RemoteFile.
+// remoteFile.
 func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, status fuse.Status) {
 	checkWritable := false
 	if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {

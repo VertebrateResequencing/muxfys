@@ -323,7 +323,8 @@ func (a *S3Accessor) DeleteFile(path string) error {
 	return a.client.RemoveObject(a.bucket, path)
 }
 
-// DeleteFile implements RemoteAccessor by deferring to minio.
+// ErrorIsNotExists implements RemoteAccessor by looking for the NoSuchKey error
+// code.
 func (a *S3Accessor) ErrorIsNotExists(err error) bool {
 	merr, ok := err.(minio.ErrorResponse)
 	return ok && merr.Code == "NoSuchKey"
