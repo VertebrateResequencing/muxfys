@@ -251,19 +251,19 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				Path:   "mybucket/subdir",
 			}
 			So(envConfig.Target, ShouldEqual, uNew.String())
+
+			envConfig2, err := S3ConfigFromEnvironment("default", "mybucket/subdir")
+			So(err, ShouldBeNil)
+			So(envConfig2.AccessKey, ShouldEqual, envConfig.AccessKey)
+			So(envConfig2.SecretKey, ShouldEqual, envConfig.SecretKey)
+			So(envConfig2.Target, ShouldEqual, envConfig.Target)
+
+			_, err = S3ConfigFromEnvironment("-fake-", "mybucket/subdir")
+			So(err, ShouldNotBeNil)
+
+			// *** how can we test chaining of ~/.s3cfg and ~/.aws/credentials
+			// without messing with those files?
 		}
-
-		envConfig2, err := S3ConfigFromEnvironment("default", "mybucket/subdir")
-		So(err, ShouldBeNil)
-		So(envConfig2.AccessKey, ShouldEqual, envConfig.AccessKey)
-		So(envConfig2.SecretKey, ShouldEqual, envConfig.SecretKey)
-		So(envConfig2.Target, ShouldEqual, envConfig.Target)
-
-		_, err = S3ConfigFromEnvironment("-fake-", "mybucket/subdir")
-		So(err, ShouldNotBeNil)
-
-		// *** how can we test chaining of ~/.s3cfg and ~/.aws/credentials
-		// without messing with those files?
 	})
 
 	// *** don't know how to test UnmountOnDeath()...
