@@ -7,6 +7,7 @@ before_install:
 before_script:
   - go get github.com/minio/minio
   - export PATH=$PATH:$HOME/gopath/bin
+  - export MUXFYS_S3_PORT="9000"
 script:
   - go test -v -coverprofile=muxfys.coverprofile -covermode count .
   - goveralls -coverprofile=muxfys.coverprofile -service travis-ci
