@@ -1,7 +1,7 @@
 language: go
 sudo: true
 go:
-  - master
+  - 1.8.1
 before_install:
   - sudo apt-get install -qq pkg-config fuse
   - sudo modprobe fuse
