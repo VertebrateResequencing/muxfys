@@ -62,8 +62,9 @@ type RemoteConfig struct {
 }
 
 // RemoteAttr struct describes the attributes of a remote file or directory.
+// Directories should have their Name property suffixed with a forward slash.
 type RemoteAttr struct {
-	Name  string    // Name of the file
+	Name  string    // Name of the file, including its full path
 	Size  int64     // Size of the file in bytes
 	MTime time.Time // Time the file was last modified
 	MD5   string    // MD5 checksum of the file (if known)
@@ -184,7 +185,7 @@ func newRemote(accessor RemoteAccessor, cacheData bool, cacheDir string, cacheBa
 			Factor: 3,
 			Jitter: true,
 		},
-		Logger: logger.New("target", accessor.Target),
+		Logger: logger.New("target", accessor.Target()),
 	}, nil
 }
 

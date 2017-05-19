@@ -255,7 +255,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 	bigFileEntry := fmt.Sprintf("big.file:file:%d", bigFileSize)
 
-	Convey("You can configure remotes from the environment", t, func() {
+	Convey("You can configure S3 from the environment", t, func() {
 		envConfig, err := S3ConfigFromEnvironment("", "mybucket/subdir")
 		So(err, ShouldBeNil)
 		So(envConfig.AccessKey, ShouldEqual, manualConfig.AccessKey)
