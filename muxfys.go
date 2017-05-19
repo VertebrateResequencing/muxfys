@@ -47,7 +47,7 @@ S3 buckets.
 
 # Usage
 
-    import "github.com/VertebrateResequencing/wr/muxfys"
+    import "github.com/VertebrateResequencing/muxfys"
 
     // fully manual S3 configuration
     accessorConfig := &muxfys.S3Config{
@@ -149,6 +149,8 @@ const (
 var (
 	logHandlerSetter = l15h.NewChanger(log15.DiscardHandler())
 	pkgLogger        = log15.New("pkg", "muxfys")
+	exitFunc         = os.Exit
+	deathSignals     = []os.Signal{os.Interrupt, syscall.SIGTERM}
 )
 
 func init() {
@@ -402,7 +404,7 @@ func (fs *MuxFys) UnmountOnDeath() {
 	}
 
 	fs.deathSignals = make(chan os.Signal, 2)
-	signal.Notify(fs.deathSignals, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(fs.deathSignals, deathSignals...)
 	fs.handlingSignals = true
 	fs.ignoreSignals = make(chan bool)
 
@@ -421,9 +423,11 @@ func (fs *MuxFys) UnmountOnDeath() {
 			err := fs.Unmount()
 			if err != nil {
 				fs.Error("Failed to unmount on death", "err", err)
-				os.Exit(2)
+				exitFunc(2)
+				return
 			}
-			os.Exit(1)
+			exitFunc(1)
+			return
 		}
 	}()
 }
@@ -523,7 +527,7 @@ func (fs *MuxFys) uploadCreated() error {
 		}
 
 		if fails > 0 {
-			return fmt.Errorf("failed to upload %d files\n", fails)
+			return fmt.Errorf("failed to upload %d files", fails)
 		}
 	}
 	return nil

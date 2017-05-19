@@ -5,6 +5,10 @@
 [![Build Status](https://travis-ci.org/VertebrateResequencing/muxfys.svg?branch=master)](https://travis-ci.org/VertebrateResequencing/muxfys)
 [![Coverage Status](https://coveralls.io/repos/github/VertebrateResequencing/muxfys/badge.svg?branch=master)](https://coveralls.io/github/VertebrateResequencing/muxfys?branch=master)
 
+```go
+go get github.com/VertebrateResequencing/muxfys
+```
+
 muxfys is a pure Go library for temporarily in-process mounting multiple
 different remote file systems or object stores on to the same mount point as a
 "filey" system. Currently only support for S3-like systems has been implemented.
@@ -179,7 +183,7 @@ that muxfys can coordinate the cache amongst independent processes.)
 # Usage
 
 ```go
-import "github.com/VertebrateResequencing/wr/muxfys"
+import "github.com/VertebrateResequencing/muxfys"
 
 // fully manual S3 configuration
 accessorConfig := &muxfys.S3Config{
@@ -279,6 +283,10 @@ capable of, it shares and adds to goofys' non-POSIX behaviours.
 
 ## Versioning
 
-The public API of the master branch of muxfys will probably remain backwards
-compatible, but this is not guaranteed. If you want to rely on a stable API, you
-must vendor the library.
+This project adheres to [Semantic Versioning](http://semver.org/). See
+CHANGELOG.md for a description of changes.
+
+If you want to rely on a stable API, vendor the library, updating within a
+desired version. For example, you could use [Glide](https://glide.sh) and:
+
+    $ glide get github.com/VertebrateResequencing/muxfys#^1.0.0
