@@ -425,6 +425,14 @@ func TestIntervals(t *testing.T) {
 
 			expected := Intervals{oneThree, sevenTen, Interval{15, 17}}
 			So(ivs, ShouldResemble, expected)
+
+			ivs = ivs.Truncate(13)
+
+			expected = Intervals{oneThree, sevenTen}
+			So(ivs, ShouldResemble, expected)
+
+			ivs = ivs.Truncate(0)
+			So(ivs, ShouldResemble, Intervals{})
 		})
 	})
 
