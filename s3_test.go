@@ -181,11 +181,11 @@ func TestS3Localntegration(t *testing.T) {
 }
 
 func TestS3RemoteIntegration(t *testing.T) {
-	// For these tests to work, $WR_S3_TARGET must be the full URL to an
-	// immediate child directory of a bucket that you have read and write
-	// permissions for, eg: https://cog.domain.com/bucket/wr_tests
-	// You must also have a ~/.s3cfg file with a [default] section specifying
-	// the same domain and scheme via host_base and use_https.
+	// For these tests to work, MUXFYS_REMOTES3_TARGET must be the full URL to
+	// an immediate child directory of a bucket that you have read and write
+	// permissions for, eg: https://cog.domain.com/bucket/wr_tests You must also
+	// have a ~/.s3cfg file with a [default] section specifying the same domain
+	// and scheme via host_base and use_https.
 	//
 	// The child directory must contain the following:
 	// perl -e 'for (1..100000) { printf "%06d\n", $_; }' > 100k.lines
