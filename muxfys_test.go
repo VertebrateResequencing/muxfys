@@ -142,7 +142,11 @@ func (a *localAccessor) LocalPath(baseDir, remotePath string) string {
 }
 
 func TestMuxFys(t *testing.T) {
-	tmpdir, err := ioutil.TempDir("", "muxfys_testing")
+	pwd, err := os.Getwd() // doing these tests from an nfs mounted home dir reveals some bugs that were fixed
+	if err != nil {
+		log.Fatal(err)
+	}
+	tmpdir, err := ioutil.TempDir(pwd, "muxfys_testing")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -156,8 +160,15 @@ func TestMuxFys(t *testing.T) {
 		log.Fatal(err)
 	}
 
+	cacheBase := filepath.Join(tmpdir, "cacheBase")
+	os.MkdirAll(cacheBase, os.FileMode(0777))
+
 	sourcePoint := filepath.Join(tmpdir, "source")
 	os.MkdirAll(sourcePoint, os.FileMode(0777))
+	err = ioutil.WriteFile(filepath.Join(sourcePoint, "read.file"), []byte("test\n"), 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	accessor := &localAccessor{
 		target: sourcePoint,
@@ -173,8 +184,9 @@ func TestMuxFys(t *testing.T) {
 	Convey("You can make a New MuxFys with an explicit Mount", t, func() {
 		explicitMount := filepath.Join(tmpdir, "explicitMount")
 		cfg := &Config{
-			Mount:   explicitMount,
-			Verbose: true,
+			Mount:     explicitMount,
+			CacheBase: cacheBase,
+			Verbose:   true,
 		}
 		fs, err := New(cfg)
 		So(err, ShouldBeNil)
@@ -247,6 +259,16 @@ func TestMuxFys(t *testing.T) {
 			Convey("You can Unmount()", func() {
 				err := fs.Unmount()
 				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
+			})
+
+			Convey("Unmount() after reading files fully deletes the cache dir", func() {
+				data, err := ioutil.ReadFile(filepath.Join(explicitMount, "read.file"))
+				So(err, ShouldBeNil)
+				So(string(data), ShouldEqual, "test\n")
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
 			})
 
 			Convey("Unmounting after creating files uploads them", func() {
@@ -310,18 +332,18 @@ func TestMuxFys(t *testing.T) {
 
 				Convey("Logs() tells you what happened", func() {
 					logs := fs.Logs()
-					So(len(logs), ShouldEqual, 3)
-					So(logs[2], ShouldContainSubstring, "lvl=eror")
-					So(logs[2], ShouldContainSubstring, `msg="Remote call failed"`)
-					So(logs[2], ShouldContainSubstring, "pkg=muxfys")
-					So(logs[2], ShouldContainSubstring, "mount="+explicitMount)
-					So(logs[2], ShouldContainSubstring, "target="+sourcePoint)
-					So(logs[2], ShouldContainSubstring, "call=UploadFile")
-					So(logs[2], ShouldContainSubstring, "path="+sourceFile)
-					So(logs[2], ShouldContainSubstring, "retries=0")
-					So(logs[2], ShouldContainSubstring, "walltime=")
-					So(logs[2], ShouldContainSubstring, `err="upload failed"`)
-					So(logs[2], ShouldContainSubstring, "caller=remote.go")
+					So(len(logs), ShouldEqual, 2)
+					So(logs[1], ShouldContainSubstring, "lvl=eror")
+					So(logs[1], ShouldContainSubstring, `msg="Remote call failed"`)
+					So(logs[1], ShouldContainSubstring, "pkg=muxfys")
+					So(logs[1], ShouldContainSubstring, "mount="+explicitMount)
+					So(logs[1], ShouldContainSubstring, "target="+sourcePoint)
+					So(logs[1], ShouldContainSubstring, "call=UploadFile")
+					So(logs[1], ShouldContainSubstring, "path="+sourceFile)
+					So(logs[1], ShouldContainSubstring, "retries=0")
+					So(logs[1], ShouldContainSubstring, "walltime=")
+					So(logs[1], ShouldContainSubstring, `err="upload failed"`)
+					So(logs[1], ShouldContainSubstring, "caller=remote.go")
 				})
 			})
 
@@ -445,4 +467,19 @@ func TestMuxFys(t *testing.T) {
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "was not empty")
 	})
+}
+
+// checkEmpty checks if the given directory is empty.
+func checkEmpty(dir string) bool {
+	f, err := os.Open(dir)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	_, err = f.Readdirnames(1)
+	if err == io.EOF {
+		return true
+	}
+	return false
 }
