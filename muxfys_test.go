@@ -78,6 +78,28 @@ func (a *localAccessor) UploadFile(source, dest, contentType string) error {
 	return a.copyFile(source, dest)
 }
 
+// UploadData implements RemoteAccessor by deferring to local fs.
+func (a *localAccessor) UploadData(data io.Reader, dest string) (err error) {
+	if uploadFail {
+		return fmt.Errorf("upload failed")
+	}
+	out, err := os.Create(dest)
+	if err != nil {
+		return
+	}
+	defer func() {
+		cerr := out.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+	if _, err = io.Copy(out, data); err != nil {
+		return
+	}
+	err = out.Sync()
+	return
+}
+
 // ListEntries implements RemoteAccessor by deferring to local fs.
 func (a *localAccessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
 	entries, err := ioutil.ReadDir(dir)
@@ -288,6 +310,12 @@ func TestMuxFys(t *testing.T) {
 				f.Close()
 				defer os.Remove(sourceFile2)
 
+				// they don't exist prior to unmount
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldNotBeNil)
+				_, err = os.Stat(sourceFile2)
+				So(err, ShouldNotBeNil)
+
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 
@@ -374,6 +402,94 @@ func TestMuxFys(t *testing.T) {
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 				So(fs.mounted, ShouldBeFalse)
+			})
+		})
+
+		Convey("You can Mount() writable uncached", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessor,
+				CacheData: false,
+				Write:     true,
+			}
+			err := fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+			defer fs.Unmount()
+
+			Convey("You can Unmount()", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+			})
+
+			Convey("Creating files immediately uploads them", func() {
+				sourceFile1 := filepath.Join(sourcePoint, "created1.file")
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldNotBeNil)
+				sourceFile2 := filepath.Join(sourcePoint, "created2.file")
+				_, err = os.Stat(sourceFile2)
+				So(err, ShouldNotBeNil)
+
+				f, err := os.OpenFile(filepath.Join(explicitMount, "created1.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				f.Close()
+				defer os.Remove(sourceFile1)
+				f, err = os.OpenFile(filepath.Join(explicitMount, "created2.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				f.Close()
+				defer os.Remove(sourceFile2)
+
+				// they exist prior to unmount
+				<-time.After(50 * time.Millisecond)
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldBeNil)
+				_, err = os.Stat(sourceFile2)
+				So(err, ShouldBeNil)
+			})
+
+			Convey("You can write data directly to the remote", func() {
+				sourceFile := filepath.Join(sourcePoint, "stream.file")
+				_, err = os.Stat(sourceFile)
+				So(err, ShouldNotBeNil)
+
+				mountFile := filepath.Join(explicitMount, "stream.file")
+				f, err := os.OpenFile(mountFile, os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				defer os.Remove(sourceFile)
+
+				info, err := os.Stat(sourceFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				f.WriteString("test\n")
+
+				info, err = os.Stat(sourceFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 5)
+
+				info, err = os.Stat(mountFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 5)
+
+				f.WriteString("test2\n")
+
+				info, err = os.Stat(sourceFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 11)
+
+				info, err = os.Stat(mountFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 11)
+
+				f.Close()
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+			})
+
+			Convey("You can't have 2 writeable remotes", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig, remoteConfig)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldEqual, "You can't have more than one writeable remote")
 			})
 		})
 

@@ -2449,6 +2449,176 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		})
 	})
 
+	Convey("You can mount in write mode without any caching", t, func() {
+		remoteConfig.Write = true
+		remoteConfig.CacheData = false
+		fs, err := New(cfg)
+		So(err, ShouldBeNil)
+
+		err = fs.Mount(remoteConfig)
+		So(err, ShouldBeNil)
+
+		defer func() {
+			err = fs.Unmount()
+			remoteConfig.Write = false
+			So(err, ShouldBeNil)
+		}()
+
+		Convey("Trying to write works", func() {
+			path := mountPoint + "/write.test"
+			b := []byte("write test\n")
+			err := ioutil.WriteFile(path, b, 0644)
+			So(err, ShouldBeNil)
+
+			defer func() {
+				err = os.Remove(path)
+				So(err, ShouldBeNil)
+			}()
+
+			// you can immediately read it back
+			bytes, err := ioutil.ReadFile(path)
+			So(err, ShouldBeNil)
+			So(bytes, ShouldResemble, b)
+
+			// and it's statable and listable
+			_, err = os.Stat(path)
+			So(err, ShouldBeNil)
+
+			entries, err := ioutil.ReadDir(mountPoint)
+			So(err, ShouldBeNil)
+			details := dirDetails(entries)
+			rootEntries := []string{"100k.lines:file:700000", bigFileEntry, "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir", "write.test:file:11"}
+			So(details, ShouldResemble, rootEntries)
+
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+
+			// remounting lets us read the file again - it actually got
+			// uploaded
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+
+			bytes, err = ioutil.ReadFile(path)
+			So(err, ShouldBeNil)
+			So(bytes, ShouldResemble, b)
+		})
+
+		Convey("Writing a large file works", func() {
+			path := mountPoint + "/write.test"
+			err = exec.Command("dd", "if=/dev/zero", "of="+path, fmt.Sprintf("bs=%d", bigFileSize), "count=1").Run()
+			So(err, ShouldBeNil)
+
+			defer func() {
+				err = os.Remove(path)
+				So(err, ShouldBeNil)
+			}()
+
+			info, err := os.Stat(path)
+			So(err, ShouldBeNil)
+			So(info.Size(), ShouldEqual, bigFileSize)
+
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+
+			info, err = os.Stat(path)
+			So(err, ShouldBeNil)
+			So(info.Size(), ShouldEqual, bigFileSize)
+		})
+
+		Convey("Given a local directory", func() {
+			mvDir := filepath.Join(tmpdir, "mvtest2")
+			mvSubDir := filepath.Join(mvDir, "mvsubdir")
+			err = os.MkdirAll(mvSubDir, os.FileMode(0700))
+			So(err, ShouldBeNil)
+			mvFile := filepath.Join(mvSubDir, "file")
+			mvBytes := []byte("mvfile\n")
+			err = ioutil.WriteFile(mvFile, mvBytes, 0644)
+			So(err, ShouldBeNil)
+			err = ioutil.WriteFile(filepath.Join(mvDir, "a.file"), mvBytes, 0644)
+			So(err, ShouldBeNil)
+
+			Convey("You can mv it to the mount point", func() {
+				mountDir := filepath.Join(mountPoint, "mvtest2")
+				dest := filepath.Join(mountDir, "mvsubdir", "file")
+				dest2 := filepath.Join(mountDir, "a.file")
+
+				cmd := exec.Command("sh", "-c", fmt.Sprintf("mv %s %s/", mvDir, mountPoint))
+				out, err := cmd.CombinedOutput()
+				So(err, ShouldBeNil)
+				So(len(out), ShouldEqual, 0)
+
+				bytes, err := ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				bytes, err = ioutil.ReadFile(dest2)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				_, err = os.Stat(filepath.Join(mountPoint, "mvtest2", "mvsubdir"))
+				So(err, ShouldBeNil)
+				_, err = os.Stat(mountDir)
+				So(err, ShouldBeNil)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig)
+				So(err, ShouldBeNil)
+
+				defer func() {
+					err = os.Remove(dest)
+					So(err, ShouldBeNil)
+					err = os.Remove(dest2)
+					So(err, ShouldBeNil)
+				}()
+
+				bytes, err = ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+			})
+
+			Convey("You can mv its contents to the mount point", func() {
+				dest := filepath.Join(mountPoint, "mvsubdir", "file")
+				dest2 := filepath.Join(mountPoint, "a.file")
+
+				cmd := exec.Command("sh", "-c", fmt.Sprintf("mv %s/* %s/", mvDir, mountPoint))
+				err = cmd.Run()
+				So(err, ShouldBeNil)
+
+				bytes, err := ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig)
+				So(err, ShouldBeNil)
+
+				defer func() {
+					err = os.Remove(dest)
+					So(err, ShouldBeNil)
+					err = os.Remove(dest2)
+					So(err, ShouldBeNil)
+				}()
+
+				bytes, err = ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+			})
+		})
+	})
+
 	Convey("You can mount multiple remotes on the same mount point", t, func() {
 		remoteConfig.CacheData = true
 		manualConfig2 := &S3Config{

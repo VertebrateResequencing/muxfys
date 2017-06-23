@@ -243,7 +243,7 @@ func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file n
 	if r.cacheData {
 		file, status = fs.openCached(r, name, flags, context, attr)
 	} else {
-		file = newRemoteFile(r, r.getRemotePath(name), attr.Size)
+		file = newRemoteFile(r, r.getRemotePath(name), attr, false)
 	}
 
 	if !r.write || (int(flags)&os.O_WRONLY == 0 && int(flags)&os.O_RDWR == 0) {
@@ -379,12 +379,22 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 // Chmod is ignored.
 func (fs *MuxFys) Chmod(name string, mode uint32, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
+	if status == fuse.ENOENT {
+		if _, exists := fs.dirs[name]; exists {
+			return fuse.OK
+		}
+	}
 	return status
 }
 
 // Chown is ignored.
 func (fs *MuxFys) Chown(name string, uid uint32, gid uint32, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
+	if status == fuse.ENOENT {
+		if _, exists := fs.dirs[name]; exists {
+			return fuse.OK
+		}
+	}
 	return status
 }
 
@@ -444,6 +454,22 @@ func (fs *MuxFys) Readlink(name string, context *fuse.Context) (out string, stat
 // SetXAttr is ignored.
 func (fs *MuxFys) SetXAttr(name string, attr string, data []byte, flags int, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
+	if status == fuse.ENOENT {
+		if _, exists := fs.dirs[name]; exists {
+			return fuse.OK
+		}
+	}
+	return status
+}
+
+// RemoveXAttr is ignored.
+func (fs *MuxFys) RemoveXAttr(name string, attr string, context *fuse.Context) fuse.Status {
+	_, _, status := fs.fileDetails(name, true)
+	if status == fuse.ENOENT {
+		if _, exists := fs.dirs[name]; exists {
+			return fuse.OK
+		}
+	}
 	return status
 }
 
@@ -453,6 +479,11 @@ func (fs *MuxFys) SetXAttr(name string, attr string, data []byte, flags int, con
 // currently used.
 func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) (status fuse.Status) {
 	attr, r, status := fs.fileDetails(name, true)
+	if status == fuse.ENOENT {
+		if _, exists := fs.dirs[name]; exists {
+			return fuse.OK
+		}
+	}
 	if status != fuse.OK || !r.cacheData {
 		return
 	}
@@ -551,8 +582,8 @@ func (fs *MuxFys) Truncate(name string, offset uint64, context *fuse.Context) fu
 	return fuse.ENOSYS
 }
 
-// Mkdir for a directory that doesn't exist yet only works whilst mounted in
-// CacheData mode. neither mode nor context are currently used.
+// Mkdir for a directory that doesn't exist yet. neither mode nor context are
+// currently used.
 func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
 	if fs.writeRemote == nil {
 		return fuse.EPERM
@@ -572,6 +603,7 @@ func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 	}
 
 	remotePath := fs.writeRemote.getRemotePath(name)
+	var err error
 	if fs.writeRemote.cacheData {
 		localPath := fs.writeRemote.getLocalPath(remotePath)
 
@@ -579,27 +611,32 @@ func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 		// instead of the supplied mode because of strange permission problems
 		// using the latter, and because it doesn't matter what permissions the
 		// user wants for the dir - this is for a user-only cache
-		var err error
 		if err = os.MkdirAll(filepath.Dir(localPath), os.FileMode(dirMode)); err == nil {
 			// make the desired directory
-			if err = os.Mkdir(localPath, os.FileMode(dirMode)); err == nil {
-				fs.mutex.Lock()
-				fs.dirs[name] = append(fs.dirs[name], fs.writeRemote)
-				if _, exists := fs.dirContents[name]; !exists {
-					fs.dirContents[name] = []fuse.DirEntry{}
-				}
-				fs.createdDirs[name] = true
-				fs.mutex.Unlock()
-				fs.addNewEntryToItsDir(name, fuse.S_IFDIR)
-			}
+			err = os.Mkdir(localPath, os.FileMode(dirMode))
 		}
-		return fuse.ToStatus(err)
+		if err != nil {
+			return fuse.ToStatus(err)
+		}
 	}
-	return fuse.ENOSYS
+
+	// we mark its existence internally but don't do anything "physical"
+	// to create the dir remotely (applies for cached and uncached modes)
+	fs.mutex.Lock()
+	fs.dirs[name] = append(fs.dirs[name], fs.writeRemote)
+	if _, exists := fs.dirContents[name]; !exists {
+		fs.dirContents[name] = []fuse.DirEntry{}
+	}
+	if fs.writeRemote.cacheData {
+		fs.createdDirs[name] = true
+	}
+	fs.mutex.Unlock()
+	fs.addNewEntryToItsDir(name, fuse.S_IFDIR)
+	return fuse.OK
 }
 
-// Rmdir only works for directories you have created whilst mounted in
-// CacheData mode. context is not currently used.
+// Rmdir only works for non-existent or empty dirs. context is not currently
+// used.
 func (fs *MuxFys) Rmdir(name string, context *fuse.Context) fuse.Status {
 	if fs.writeRemote == nil {
 		return fuse.EPERM
@@ -607,24 +644,28 @@ func (fs *MuxFys) Rmdir(name string, context *fuse.Context) fuse.Status {
 
 	if _, isDir := fs.dirs[name]; !isDir {
 		return fuse.ENOENT
-	} else if _, created := fs.createdDirs[name]; !created {
+	} else if contents, exists := fs.dirContents[name]; exists && len(contents) > 0 {
 		return fuse.ENOSYS
 	}
 
 	remotePath := fs.writeRemote.getRemotePath(name)
+	var err error
 	if fs.writeRemote.cacheData {
-		err := syscall.Rmdir(fs.writeRemote.getLocalPath(remotePath))
-		if err == nil {
-			fs.mutex.Lock()
-			delete(fs.dirs, name)
-			delete(fs.createdDirs, name)
-			delete(fs.dirContents, name)
-			fs.mutex.Unlock()
-			fs.rmEntryFromItsDir(name)
+		err = syscall.Rmdir(fs.writeRemote.getLocalPath(remotePath))
+		if err != nil {
+			return fuse.ToStatus(err)
 		}
-		return fuse.ToStatus(err)
+
 	}
-	return fuse.ENOSYS
+
+	fs.mutex.Lock()
+	delete(fs.dirs, name)
+	delete(fs.createdDirs, name)
+	delete(fs.dirContents, name)
+	fs.mutex.Unlock()
+	fs.rmEntryFromItsDir(name)
+
+	return fuse.OK
 }
 
 // Rename only works where oldPath is found in the writeable remote. For files,
@@ -773,9 +814,9 @@ func (fs *MuxFys) Access(name string, mode uint32, context *fuse.Context) fuse.S
 	return fuse.OK
 }
 
-// Create creates a new file. mode and context are not currently used. Only
-// currently implemented for when configured with CacheData; the contents of the
-// created file are only uploaded at Unmount() time.
+// Create creates a new file. mode and context are not currently used. When
+// configured with CacheData the contents of the created file are only uploaded
+// at Unmount() time.
 func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
 	r := fs.writeRemote
 	if r == nil {
@@ -783,8 +824,9 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 	}
 
 	remotePath := r.getRemotePath(name)
+	var localPath string
 	if r.cacheData {
-		localPath := r.getLocalPath(remotePath)
+		localPath = r.getLocalPath(remotePath)
 
 		fmutex, err := fs.getFileMutex(localPath)
 		if err != nil {
@@ -792,35 +834,38 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 		}
 		fmutex.Lock()
 		defer fmutex.Unlock()
-
-		fs.mutex.Lock()
-		attr, existed := fs.files[name]
-		mTime := uint64(time.Now().Unix())
-		if !existed {
-			// add to our directory entries for this file's dir
-			fs.mutex.Unlock()
-			fs.addNewEntryToItsDir(name, fuse.S_IFREG)
-			fs.mutex.Lock()
-
-			attr = &fuse.Attr{
-				Mode:  fuse.S_IFREG | uint32(fileMode),
-				Size:  uint64(0),
-				Mtime: mTime,
-				Atime: mTime,
-				Ctime: mTime,
-			}
-			fs.files[name] = attr
-			fs.fileToRemote[name] = r
-		} else {
-			attr.Mtime = mTime
-			attr.Atime = mTime
-		}
-		fs.createdFiles[name] = true
-		fs.mutex.Unlock()
-
-		return newCachedFile(r, remotePath, localPath, attr, uint32(int(flags)|os.O_CREATE), fs.Logger), fuse.ToStatus(err)
 	}
-	return nil, fuse.ENOSYS
+
+	fs.mutex.Lock()
+	attr, existed := fs.files[name]
+	mTime := uint64(time.Now().Unix())
+	if !existed {
+		// add to our directory entries for this file's dir
+		fs.mutex.Unlock()
+		fs.addNewEntryToItsDir(name, fuse.S_IFREG)
+		fs.mutex.Lock()
+
+		attr = &fuse.Attr{
+			Mode:  fuse.S_IFREG | uint32(fileMode),
+			Size:  uint64(0),
+			Mtime: mTime,
+			Atime: mTime,
+			Ctime: mTime,
+		}
+		fs.files[name] = attr
+		fs.fileToRemote[name] = r
+	} else {
+		attr.Mtime = mTime
+		attr.Atime = mTime
+	}
+	fs.createdFiles[name] = true
+	fs.mutex.Unlock()
+
+	if r.cacheData {
+		return newCachedFile(r, remotePath, localPath, attr, uint32(int(flags)|os.O_CREATE), fs.Logger), fuse.OK
+	} else {
+		return newRemoteFile(r, remotePath, attr, true), fuse.OK
+	}
 }
 
 // addNewEntryToItsDir adds a DirEntry for the file/dir named name to that

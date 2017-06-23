@@ -36,25 +36,38 @@ import (
 // directly from a remote file system or object store.
 type remoteFile struct {
 	nodefs.File
-	r          *remote
-	path       string
-	mutex      sync.Mutex
-	size       uint64
-	readOffset int64
-	reader     io.ReadCloser
-	skips      map[int64][]byte
+	r             *remote
+	path          string
+	mutex         sync.Mutex
+	attr          *fuse.Attr
+	readOffset    int64
+	reader        io.ReadCloser
+	rpipe         *io.PipeReader
+	wpipe         *io.PipeWriter
+	writeOffset   int64
+	writeComplete chan bool
+	skips         map[int64][]byte
 }
 
 // newRemoteFile creates a new RemoteFile. For all the methods not yet
-// implemented (notably writing), fuse will get a not yet implemented error.
-func newRemoteFile(r *remote, path string, size uint64) nodefs.File {
-	return &remoteFile{
+// implemented, fuse will get a not yet implemented error.
+func newRemoteFile(r *remote, path string, attr *fuse.Attr, create bool) nodefs.File {
+	f := &remoteFile{
 		File:  nodefs.NewDefaultFile(),
 		r:     r,
 		path:  path,
-		size:  size,
+		attr:  attr,
 		skips: make(map[int64][]byte),
 	}
+
+	if create {
+		f.rpipe, f.wpipe = io.Pipe()
+		ready, finished := r.uploadData(f.rpipe, path)
+		<-ready
+		f.writeComplete = finished
+	}
+
+	return f
 }
 
 // Read supports random reading of data from the file. This gets called as many
@@ -64,7 +77,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	if uint64(offset) >= f.size {
+	if uint64(offset) >= f.attr.Size {
 		// nothing to read
 		return nil, fuse.OK
 	}
@@ -147,17 +160,71 @@ func (f *remoteFile) fillBuffer(buf []byte) (status fuse.Status) {
 	return fuse.OK
 }
 
-// Release makes sure we close our readers.
+// Write supports serial writes of data directly to a remote file, where
+// remoteFile was made with newRemoteFile() with the create boolean set to true.
+func (f *remoteFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if len(data) == 0 {
+		// ignore zero-length writes that come in for some reason
+		return uint32(0), fuse.OK
+	}
+
+	if offset != f.writeOffset {
+		// we can't handle non-serial writes
+		return uint32(0), fuse.EIO
+	}
+
+	if f.wpipe == nil {
+		// shouldn't happen: trying to write after close (Flush()), or without
+		// making the remoteFile with create true.
+		return uint32(0), fuse.EIO
+	}
+
+	n, err := f.wpipe.Write(data)
+
+	f.writeOffset += int64(n)
+	f.attr.Size += uint64(n)
+	mTime := uint64(time.Now().Unix())
+	f.attr.Mtime = mTime
+	f.attr.Atime = mTime
+
+	return uint32(n), fuse.ToStatus(err)
+}
+
+// Flush, despite the name, is called for close() calls on file descriptors. It
+// may be called more than once at the end, and may be called at the start,
+// however.
+func (f *remoteFile) Flush() fuse.Status {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if f.readOffset > 0 && f.reader != nil {
+		f.reader.Close()
+		f.reader = nil
+	}
+
+	if f.writeOffset > 0 && f.wpipe != nil {
+		f.wpipe.Close()
+		f.writeOffset = 0
+		<-f.writeComplete
+		f.wpipe = nil
+		f.rpipe = nil
+	}
+
+	return fuse.OK
+}
+
+// Release is called before the file handle is forgotten, so we do final
+// cleanup not done in Flush().
 func (f *remoteFile) Release() {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
-	if f.reader != nil {
-		f.reader.Close()
-	}
 	f.skips = make(map[int64][]byte)
 }
 
-// Fsync always returns OK as opposed to "not imlemented" so that write-sync-
+// Fsync always returns OK as opposed to "not implemented" so that write-sync-
 // write works.
 func (f *remoteFile) Fsync(flags int) fuse.Status {
 	return fuse.OK
@@ -192,7 +259,7 @@ func newCachedFile(r *remote, remotePath, localPath string, attr *fuse.Attr, fla
 		Logger:     logger.New("rpath", remotePath, "lpath", localPath),
 	}
 	f.makeLoopback()
-	f.remoteFile = newRemoteFile(r, remotePath, attr.Size).(*remoteFile)
+	f.remoteFile = newRemoteFile(r, remotePath, attr, false).(*remoteFile)
 	return f
 }
 

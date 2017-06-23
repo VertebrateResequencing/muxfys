@@ -280,6 +280,12 @@ func (a *S3Accessor) UploadFile(source, dest, contentType string) error {
 	return err
 }
 
+// UploadData implements RemoteAccessor by deferring to minio.
+func (a *S3Accessor) UploadData(data io.Reader, dest string) error {
+	_, err := a.client.PutObjectStreaming(a.bucket, dest, data)
+	return err
+}
+
 // ListEntries implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
 	doneCh := make(chan struct{})
