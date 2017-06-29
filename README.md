@@ -287,4 +287,4 @@ CHANGELOG.md for a description of changes.
 If you want to rely on a stable API, vendor the library, updating within a
 desired version. For example, you could use [Glide](https://glide.sh) and:
 
-    $ glide get github.com/VertebrateResequencing/muxfys#^1.0.0
+    $ glide get github.com/VertebrateResequencing/muxfys#^2.0.0
