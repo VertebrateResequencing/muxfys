@@ -181,11 +181,11 @@ func TestS3Localntegration(t *testing.T) {
 }
 
 func TestS3RemoteIntegration(t *testing.T) {
-	// For these tests to work, $WR_S3_TARGET must be the full URL to an
-	// immediate child directory of a bucket that you have read and write
-	// permissions for, eg: https://cog.domain.com/bucket/wr_tests
-	// You must also have a ~/.s3cfg file with a [default] section specifying
-	// the same domain and scheme via host_base and use_https.
+	// For these tests to work, MUXFYS_REMOTES3_TARGET must be the full URL to
+	// an immediate child directory of a bucket that you have read and write
+	// permissions for, eg: https://cog.domain.com/bucket/wr_tests You must also
+	// have a ~/.s3cfg file with a [default] section specifying the same domain
+	// and scheme via host_base and use_https.
 	//
 	// The child directory must contain the following:
 	// perl -e 'for (1..100000) { printf "%06d\n", $_; }' > 100k.lines
@@ -285,8 +285,6 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			// without messing with those files?
 		}
 	})
-
-	// *** don't know how to test UnmountOnDeath()...
 
 	var bigFileGetTime time.Duration
 	Convey("You can mount with local file caching", t, func() {
@@ -622,6 +620,18 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			err = cmd.Run()
 			So(err, ShouldNotBeNil)
 		})
+
+		Convey("Unmounting after reading a file deletes the cache dir", func() {
+			streamFile(mountPoint+"/numalphanum.txt", 0)
+			thisCacheDir := fs.remotes[0].cacheDir
+			_, err = os.Stat(thisCacheDir)
+			So(err, ShouldBeNil)
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+			_, err = os.Stat(thisCacheDir)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+		})
 	})
 
 	Convey("You can mount with local file caching in write mode", t, func() {
@@ -650,6 +660,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			So(bytes, ShouldResemble, b)
 
 			// (because it's in the the local cache)
+			thisCacheDir := fs.remotes[0].cacheDir
+			_, err = os.Stat(thisCacheDir)
+			So(err, ShouldBeNil)
 			cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 			_, err = os.Stat(cachePath)
 			So(err, ShouldBeNil)
@@ -669,6 +682,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			So(err, ShouldBeNil)
 
 			_, err = os.Stat(cachePath)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+			_, err = os.Stat(thisCacheDir)
 			So(err, ShouldNotBeNil)
 			So(os.IsNotExist(err), ShouldBeTrue)
 			_, err = os.Stat(path)
@@ -1047,6 +1063,78 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				So(bytes, ShouldResemble, b)
 
 				os.Remove(path)
+			})
+		})
+
+		Convey("Given a local directory", func() {
+			mvDir := filepath.Join(tmpdir, "mvtest")
+			mvSubDir := filepath.Join(mvDir, "mvsubdir")
+			err = os.MkdirAll(mvSubDir, os.FileMode(0700))
+			So(err, ShouldBeNil)
+			mvFile := filepath.Join(mvSubDir, "file")
+			mvBytes := []byte("mvfile\n")
+			err = ioutil.WriteFile(mvFile, mvBytes, 0644)
+			So(err, ShouldBeNil)
+			err = ioutil.WriteFile(filepath.Join(mvDir, "a.file"), mvBytes, 0644)
+			So(err, ShouldBeNil)
+
+			Convey("You can mv it to the mount point", func() {
+				mountDir := filepath.Join(mountPoint, "mvtest")
+				dest := filepath.Join(mountDir, "mvsubdir", "file")
+				dest2 := filepath.Join(mountDir, "a.file")
+
+				cmd := exec.Command("mv", mvDir, mountDir)
+				err = cmd.Run()
+				So(err, ShouldBeNil)
+
+				bytes, err := ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig)
+				So(err, ShouldBeNil)
+
+				defer func() {
+					err = os.Remove(dest)
+					So(err, ShouldBeNil)
+					err = os.Remove(dest2)
+					So(err, ShouldBeNil)
+				}()
+
+				bytes, err = ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+			})
+
+			Convey("You can mv its contents to the mount point", func() {
+				dest := filepath.Join(mountPoint, "mvsubdir", "file")
+				dest2 := filepath.Join(mountPoint, "a.file")
+
+				cmd := exec.Command("sh", "-c", fmt.Sprintf("mv %s/* %s/", mvDir, mountPoint))
+				err = cmd.Run()
+				So(err, ShouldBeNil)
+
+				bytes, err := ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig)
+				So(err, ShouldBeNil)
+
+				defer func() {
+					err = os.Remove(dest)
+					So(err, ShouldBeNil)
+					err = os.Remove(dest2)
+					So(err, ShouldBeNil)
+				}()
+
+				bytes, err = ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
 			})
 		})
 
@@ -2358,6 +2446,184 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			_, err = streamFile(path, 0)
 			So(err, ShouldNotBeNil)
 			So(os.IsNotExist(err), ShouldBeTrue)
+		})
+	})
+
+	Convey("You can mount in write mode without any caching", t, func() {
+		remoteConfig.Write = true
+		remoteConfig.CacheData = false
+		fs, err := New(cfg)
+		So(err, ShouldBeNil)
+
+		err = fs.Mount(remoteConfig)
+		So(err, ShouldBeNil)
+
+		defer func() {
+			err = fs.Unmount()
+			remoteConfig.Write = false
+			So(err, ShouldBeNil)
+		}()
+
+		Convey("Trying to write works", func() {
+			path := mountPoint + "/write.test"
+			b := []byte("write test\n")
+			err := ioutil.WriteFile(path, b, 0644)
+			So(err, ShouldBeNil)
+
+			defer func() {
+				err = os.Remove(path)
+				So(err, ShouldBeNil)
+			}()
+
+			// you can immediately read it back
+			bytes, err := ioutil.ReadFile(path)
+			So(err, ShouldBeNil)
+			So(bytes, ShouldResemble, b)
+
+			// and it's statable and listable
+			_, err = os.Stat(path)
+			So(err, ShouldBeNil)
+
+			entries, err := ioutil.ReadDir(mountPoint)
+			So(err, ShouldBeNil)
+			details := dirDetails(entries)
+			rootEntries := []string{"100k.lines:file:700000", bigFileEntry, "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir", "write.test:file:11"}
+			So(details, ShouldResemble, rootEntries)
+
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+
+			// remounting lets us read the file again - it actually got
+			// uploaded
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+
+			bytes, err = ioutil.ReadFile(path)
+			So(err, ShouldBeNil)
+			So(bytes, ShouldResemble, b)
+		})
+
+		Convey("Writing a large file works", func() {
+			// because minio-go currently uses a ~600MB bytes.Buffer (2x
+			// allocation growth) during streaming upload, and dd itself creates
+			// an input buffer of the size bs, we have to give dd a small bs and
+			// increase the count instead. This way we don't run out of memory
+			// even when bigFileSize is greater than physical memory on the
+			// machine
+
+			path := mountPoint + "/write.test"
+			err := exec.Command("dd", "if=/dev/zero", "of="+path, fmt.Sprintf("bs=%d", bigFileSize/1000), "count=1000").Run()
+			So(err, ShouldBeNil)
+
+			defer func() {
+				err = os.Remove(path)
+				So(err, ShouldBeNil)
+			}()
+
+			info, err := os.Stat(path)
+			So(err, ShouldBeNil)
+			expectedSize := (bigFileSize / 1000) * 1000
+			So(info.Size(), ShouldEqual, expectedSize)
+
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+
+			info, err = os.Stat(path)
+			So(err, ShouldBeNil)
+			So(info.Size(), ShouldEqual, expectedSize)
+		})
+
+		Convey("Given a local directory", func() {
+			mvDir := filepath.Join(tmpdir, "mvtest2")
+			mvSubDir := filepath.Join(mvDir, "mvsubdir")
+			err = os.MkdirAll(mvSubDir, os.FileMode(0700))
+			So(err, ShouldBeNil)
+			mvFile := filepath.Join(mvSubDir, "file")
+			mvBytes := []byte("mvfile\n")
+			err = ioutil.WriteFile(mvFile, mvBytes, 0644)
+			So(err, ShouldBeNil)
+			err = ioutil.WriteFile(filepath.Join(mvDir, "a.file"), mvBytes, 0644)
+			So(err, ShouldBeNil)
+
+			Convey("You can mv it to the mount point", func() {
+				mountDir := filepath.Join(mountPoint, "mvtest2")
+				dest := filepath.Join(mountDir, "mvsubdir", "file")
+				dest2 := filepath.Join(mountDir, "a.file")
+
+				cmd := exec.Command("sh", "-c", fmt.Sprintf("mv %s %s/", mvDir, mountPoint))
+				out, err := cmd.CombinedOutput()
+				So(err, ShouldBeNil)
+				So(len(out), ShouldEqual, 0)
+
+				bytes, err := ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				bytes, err = ioutil.ReadFile(dest2)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				_, err = os.Stat(filepath.Join(mountPoint, "mvtest2", "mvsubdir"))
+				So(err, ShouldBeNil)
+				_, err = os.Stat(mountDir)
+				So(err, ShouldBeNil)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig)
+				So(err, ShouldBeNil)
+
+				defer func() {
+					err = os.Remove(dest)
+					So(err, ShouldBeNil)
+					err = os.Remove(dest2)
+					So(err, ShouldBeNil)
+				}()
+
+				bytes, err = ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+			})
+
+			Convey("You can mv its contents to the mount point", func() {
+				dest := filepath.Join(mountPoint, "mvsubdir", "file")
+				dest2 := filepath.Join(mountPoint, "a.file")
+
+				cmd := exec.Command("sh", "-c", fmt.Sprintf("mv %s/* %s/", mvDir, mountPoint))
+				err = cmd.Run()
+				So(err, ShouldBeNil)
+
+				bytes, err := ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig)
+				So(err, ShouldBeNil)
+
+				defer func() {
+					err = os.Remove(dest)
+					So(err, ShouldBeNil)
+					err = os.Remove(dest2)
+					So(err, ShouldBeNil)
+				}()
+
+				bytes, err = ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, mvBytes)
+			})
 		})
 	})
 

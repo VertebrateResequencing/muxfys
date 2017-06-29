@@ -78,6 +78,28 @@ func (a *localAccessor) UploadFile(source, dest, contentType string) error {
 	return a.copyFile(source, dest)
 }
 
+// UploadData implements RemoteAccessor by deferring to local fs.
+func (a *localAccessor) UploadData(data io.Reader, dest string) (err error) {
+	if uploadFail {
+		return fmt.Errorf("upload failed")
+	}
+	out, err := os.Create(dest)
+	if err != nil {
+		return
+	}
+	defer func() {
+		cerr := out.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+	if _, err = io.Copy(out, data); err != nil {
+		return
+	}
+	err = out.Sync()
+	return
+}
+
 // ListEntries implements RemoteAccessor by deferring to local fs.
 func (a *localAccessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
 	entries, err := ioutil.ReadDir(dir)
@@ -120,9 +142,19 @@ func (a *localAccessor) DeleteFile(path string) error {
 	return os.Remove(path)
 }
 
+// DeleteIncompleteUpload implements RemoteAccessor by deferring to local fs.
+func (a *localAccessor) DeleteIncompleteUpload(path string) {
+	os.Remove(path)
+}
+
 // ErrorIsNotExists implements RemoteAccessor by deferring to os.
 func (a *localAccessor) ErrorIsNotExists(err error) bool {
 	return os.IsNotExist(err)
+}
+
+// ErrorIsNoQuota implements RemoteAccessor by deferring to os.
+func (a *localAccessor) ErrorIsNoQuota(err error) bool {
+	return false // *** is there a standard error for running out of disk space?
 }
 
 // Target implements RemoteAccessor by returning the initial target we were
@@ -142,7 +174,11 @@ func (a *localAccessor) LocalPath(baseDir, remotePath string) string {
 }
 
 func TestMuxFys(t *testing.T) {
-	tmpdir, err := ioutil.TempDir("", "muxfys_testing")
+	pwd, err := os.Getwd() // doing these tests from an nfs mounted home dir reveals some bugs that were fixed
+	if err != nil {
+		log.Fatal(err)
+	}
+	tmpdir, err := ioutil.TempDir(pwd, "muxfys_testing")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -156,8 +192,15 @@ func TestMuxFys(t *testing.T) {
 		log.Fatal(err)
 	}
 
+	cacheBase := filepath.Join(tmpdir, "cacheBase")
+	os.MkdirAll(cacheBase, os.FileMode(0777))
+
 	sourcePoint := filepath.Join(tmpdir, "source")
 	os.MkdirAll(sourcePoint, os.FileMode(0777))
+	err = ioutil.WriteFile(filepath.Join(sourcePoint, "read.file"), []byte("test\n"), 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	accessor := &localAccessor{
 		target: sourcePoint,
@@ -173,8 +216,9 @@ func TestMuxFys(t *testing.T) {
 	Convey("You can make a New MuxFys with an explicit Mount", t, func() {
 		explicitMount := filepath.Join(tmpdir, "explicitMount")
 		cfg := &Config{
-			Mount:   explicitMount,
-			Verbose: true,
+			Mount:     explicitMount,
+			CacheBase: cacheBase,
+			Verbose:   true,
 		}
 		fs, err := New(cfg)
 		So(err, ShouldBeNil)
@@ -247,6 +291,16 @@ func TestMuxFys(t *testing.T) {
 			Convey("You can Unmount()", func() {
 				err := fs.Unmount()
 				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
+			})
+
+			Convey("Unmount() after reading files fully deletes the cache dir", func() {
+				data, err := ioutil.ReadFile(filepath.Join(explicitMount, "read.file"))
+				So(err, ShouldBeNil)
+				So(string(data), ShouldEqual, "test\n")
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
 			})
 
 			Convey("Unmounting after creating files uploads them", func() {
@@ -265,6 +319,12 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 				f.Close()
 				defer os.Remove(sourceFile2)
+
+				// they don't exist prior to unmount
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldNotBeNil)
+				_, err = os.Stat(sourceFile2)
+				So(err, ShouldNotBeNil)
 
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
@@ -310,18 +370,18 @@ func TestMuxFys(t *testing.T) {
 
 				Convey("Logs() tells you what happened", func() {
 					logs := fs.Logs()
-					So(len(logs), ShouldEqual, 3)
-					So(logs[2], ShouldContainSubstring, "lvl=eror")
-					So(logs[2], ShouldContainSubstring, `msg="Remote call failed"`)
-					So(logs[2], ShouldContainSubstring, "pkg=muxfys")
-					So(logs[2], ShouldContainSubstring, "mount="+explicitMount)
-					So(logs[2], ShouldContainSubstring, "target="+sourcePoint)
-					So(logs[2], ShouldContainSubstring, "call=UploadFile")
-					So(logs[2], ShouldContainSubstring, "path="+sourceFile)
-					So(logs[2], ShouldContainSubstring, "retries=0")
-					So(logs[2], ShouldContainSubstring, "walltime=")
-					So(logs[2], ShouldContainSubstring, `err="upload failed"`)
-					So(logs[2], ShouldContainSubstring, "caller=remote.go")
+					So(len(logs), ShouldEqual, 2)
+					So(logs[1], ShouldContainSubstring, "lvl=eror")
+					So(logs[1], ShouldContainSubstring, `msg="Remote call failed"`)
+					So(logs[1], ShouldContainSubstring, "pkg=muxfys")
+					So(logs[1], ShouldContainSubstring, "mount="+explicitMount)
+					So(logs[1], ShouldContainSubstring, "target="+sourcePoint)
+					So(logs[1], ShouldContainSubstring, "call=UploadFile")
+					So(logs[1], ShouldContainSubstring, "path="+sourceFile)
+					So(logs[1], ShouldContainSubstring, "retries=0")
+					So(logs[1], ShouldContainSubstring, "walltime=")
+					So(logs[1], ShouldContainSubstring, `err="upload failed"`)
+					So(logs[1], ShouldContainSubstring, "caller=remote.go")
 				})
 			})
 
@@ -352,6 +412,94 @@ func TestMuxFys(t *testing.T) {
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 				So(fs.mounted, ShouldBeFalse)
+			})
+		})
+
+		Convey("You can Mount() writable uncached", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessor,
+				CacheData: false,
+				Write:     true,
+			}
+			err := fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+			defer fs.Unmount()
+
+			Convey("You can Unmount()", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+			})
+
+			Convey("Creating files immediately uploads them", func() {
+				sourceFile1 := filepath.Join(sourcePoint, "created1.file")
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldNotBeNil)
+				sourceFile2 := filepath.Join(sourcePoint, "created2.file")
+				_, err = os.Stat(sourceFile2)
+				So(err, ShouldNotBeNil)
+
+				f, err := os.OpenFile(filepath.Join(explicitMount, "created1.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				f.Close()
+				defer os.Remove(sourceFile1)
+				f, err = os.OpenFile(filepath.Join(explicitMount, "created2.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				f.Close()
+				defer os.Remove(sourceFile2)
+
+				// they exist prior to unmount
+				<-time.After(50 * time.Millisecond)
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldBeNil)
+				_, err = os.Stat(sourceFile2)
+				So(err, ShouldBeNil)
+			})
+
+			Convey("You can write data directly to the remote", func() {
+				sourceFile := filepath.Join(sourcePoint, "stream.file")
+				_, err = os.Stat(sourceFile)
+				So(err, ShouldNotBeNil)
+
+				mountFile := filepath.Join(explicitMount, "stream.file")
+				f, err := os.OpenFile(mountFile, os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				defer os.Remove(sourceFile)
+
+				info, err := os.Stat(sourceFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 0)
+
+				f.WriteString("test\n")
+
+				info, err = os.Stat(sourceFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 5)
+
+				info, err = os.Stat(mountFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 5)
+
+				f.WriteString("test2\n")
+
+				info, err = os.Stat(sourceFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 11)
+
+				info, err = os.Stat(mountFile)
+				So(err, ShouldBeNil)
+				So(info.Size(), ShouldEqual, 11)
+
+				f.Close()
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+			})
+
+			Convey("You can't have 2 writeable remotes", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+				err = fs.Mount(remoteConfig, remoteConfig)
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldEqual, "You can't have more than one writeable remote")
 			})
 		})
 
@@ -445,4 +593,19 @@ func TestMuxFys(t *testing.T) {
 		So(err, ShouldNotBeNil)
 		So(err.Error(), ShouldContainSubstring, "was not empty")
 	})
+}
+
+// checkEmpty checks if the given directory is empty.
+func checkEmpty(dir string) bool {
+	f, err := os.Open(dir)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	_, err = f.Readdirnames(1)
+	if err == io.EOF {
+		return true
+	}
+	return false
 }

@@ -5,9 +5,8 @@
 [![Build Status](https://travis-ci.org/VertebrateResequencing/muxfys.svg?branch=master)](https://travis-ci.org/VertebrateResequencing/muxfys)
 [![Coverage Status](https://coveralls.io/repos/github/VertebrateResequencing/muxfys/badge.svg?branch=master)](https://coveralls.io/github/VertebrateResequencing/muxfys?branch=master)
 
-```go
-go get github.com/VertebrateResequencing/muxfys
-```
+    go get github.com/VertebrateResequencing/muxfys
+
 
 muxfys is a pure Go library for temporarily in-process mounting multiple
 different remote file systems or object stores on to the same mount point as a
@@ -143,9 +142,8 @@ The only `RemoteAccessor` implemented so far is for S3-like object stores.
 
 In cached mode, random reads and writes have been implemented.
 
-In non-cached mode, only random reads have been implemented so far.
-
-Coming soon: serial writes in non-cached mode.
+In non-cached mode, random reads and serial writes have been implemented.
+(It is unlikely that random uncached writes will be implemented.)
 
 Non-POSIX behaviours:
 
@@ -289,4 +287,4 @@ CHANGELOG.md for a description of changes.
 If you want to rely on a stable API, vendor the library, updating within a
 desired version. For example, you could use [Glide](https://glide.sh) and:
 
-    $ glide get github.com/VertebrateResequencing/muxfys#^1.0.0
+    $ glide get github.com/VertebrateResequencing/muxfys#^2.0.0
