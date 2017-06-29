@@ -2508,8 +2508,15 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		})
 
 		Convey("Writing a large file works", func() {
+			// because minio-go currently uses a ~600MB bytes.Buffer (2x
+			// allocation growth) during streaming upload, and dd itself creates
+			// an input buffer of the size bs, we have to give dd a small bs and
+			// increase the count instead. This way we don't run out of memory
+			// even when bigFileSize is greater than physical memory on the
+			// machine
+
 			path := mountPoint + "/write.test"
-			err = exec.Command("dd", "if=/dev/zero", "of="+path, fmt.Sprintf("bs=%d", bigFileSize), "count=1").Run()
+			err := exec.Command("dd", "if=/dev/zero", "of="+path, fmt.Sprintf("bs=%d", bigFileSize/1000), "count=1000").Run()
 			So(err, ShouldBeNil)
 
 			defer func() {
@@ -2519,7 +2526,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			info, err := os.Stat(path)
 			So(err, ShouldBeNil)
-			So(info.Size(), ShouldEqual, bigFileSize)
+			expectedSize := (bigFileSize / 1000) * 1000
+			So(info.Size(), ShouldEqual, expectedSize)
 
 			err = fs.Unmount()
 			So(err, ShouldBeNil)
@@ -2533,7 +2541,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			info, err = os.Stat(path)
 			So(err, ShouldBeNil)
-			So(info.Size(), ShouldEqual, bigFileSize)
+			So(info.Size(), ShouldEqual, expectedSize)
 		})
 
 		Convey("Given a local directory", func() {

@@ -28,6 +28,7 @@ import (
 	"github.com/inconshreveable/log15"
 	"io"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -208,9 +209,13 @@ func (f *remoteFile) Flush() fuse.Status {
 	if f.writeOffset > 0 && f.wpipe != nil {
 		f.wpipe.Close()
 		f.writeOffset = 0
-		<-f.writeComplete
+		worked := <-f.writeComplete
+		if worked {
+			f.rpipe.Close()
+		}
 		f.wpipe = nil
 		f.rpipe = nil
+		debug.FreeOSMemory() // otherwise a subsequent Unmount may fail because fork/exec can't allocate memory
 	}
 
 	return fuse.OK
@@ -227,6 +232,21 @@ func (f *remoteFile) Release() {
 // Fsync always returns OK as opposed to "not implemented" so that write-sync-
 // write works.
 func (f *remoteFile) Fsync(flags int) fuse.Status {
+	return fuse.OK
+}
+
+// Truncate could be called as a prelude to writing and in alternative to
+// making this remoteFile in create mode.
+func (f *remoteFile) Truncate(size uint64) fuse.Status {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.attr.Size = size
+	if f.wpipe == nil {
+		f.rpipe, f.wpipe = io.Pipe()
+		ready, finished := f.r.uploadData(f.rpipe, f.path)
+		<-ready
+		f.writeComplete = finished
+	}
 	return fuse.OK
 }
 

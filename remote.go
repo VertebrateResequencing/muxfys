@@ -106,10 +106,20 @@ type RemoteAccessor interface {
 	// DeleteFile should delete the remote file at the given path.
 	DeleteFile(path string) error
 
+	// DeleteIncompleteUpload is like DeleteFile, but only called after a failed
+	// Upload*() attempt. Errors are not considered in this context, since we
+	// could be asking to delete something that doesn't exist.
+	DeleteIncompleteUpload(path string)
+
 	// ErrorIsNotExists should return true if the supplied error (retrieved from
 	// any of the above methods called on the same RemoteAccessor
 	// implementation) indicates a file not existing.
 	ErrorIsNotExists(err error) bool
+
+	// ErrorIsNoQuota should return true if the supplied error (retrieved from
+	// any of the above methods called on the same RemoteAccessor
+	// implementation) indicates insufficient quota to write some data.
+	ErrorIsNoQuota(err error) bool
 
 	// Target should return a string describing the complete location details of
 	// what the accessor has been configured to access. Eg. it might be a url.
@@ -201,7 +211,7 @@ type retryFunc func() error
 // without error. While a RemoteAccessor implementation may do retries
 // internally, it may not do retries in all circumstances, whereas we want to.
 // It logs errors itself. Does not bother retrying when the error indicates a
-// requested file does not exist.
+// requested file does not exist or the quota is exceeded.
 func (r *remote) retry(clientMethod string, path string, rf retryFunc) fuse.Status {
 	attempts := 0
 	start := time.Now()
@@ -210,10 +220,14 @@ ATTEMPTS:
 		attempts++
 		err := rf()
 		if err != nil {
-			// return immediately if key not found
+			// return immediately if key not found or quota exceeded
 			if r.accessor.ErrorIsNotExists(err) {
 				r.Warn("File doesn't exist", "call", clientMethod, "path", path, "walltime", time.Since(start))
 				return fuse.ENOENT
+			}
+			if r.accessor.ErrorIsNoQuota(err) {
+				r.Warn("Quota Exceeded", "call", clientMethod, "path", path, "walltime", time.Since(start))
+				return fuse.ENODATA
 			}
 
 			// otherwise blindly retry for maxAttempts times
@@ -236,8 +250,12 @@ ATTEMPTS:
 func (r *remote) statusFromErr(clientMethod string, err error) fuse.Status {
 	if err != nil {
 		if r.accessor.ErrorIsNotExists(err) {
-			r.Warn("File didn't exist", "call", clientMethod)
+			r.Warn("File doesn't exist", "call", clientMethod)
 			return fuse.ENOENT
+		}
+		if r.accessor.ErrorIsNoQuota(err) {
+			r.Warn("Quota Exceeded", "call", clientMethod)
+			return fuse.ENODATA
 		}
 		r.Error("Remote call failed", "call", clientMethod, "err", err)
 		return fuse.EIO
@@ -284,7 +302,11 @@ func (r *remote) uploadFile(localPath, remotePath string) fuse.Status {
 	rf := func() error {
 		return r.accessor.UploadFile(localPath, remotePath, contentType)
 	}
-	return r.retry("UploadFile", remotePath, rf)
+	status := r.retry("UploadFile", remotePath, rf)
+	if status != fuse.OK {
+		r.accessor.DeleteIncompleteUpload(remotePath)
+	}
+	return status
 }
 
 // uploadData uploads the given data stream to the given remote path, with
@@ -294,9 +316,9 @@ func (r *remote) uploadFile(localPath, remotePath string) fuse.Status {
 // will receive true a little while after we've hopefully gone through any
 // initialization phase (such as creating the remote file) and are now ready
 // for data to start coming in. The finished channel receives true once the
-// upload actually completes. (If there are any errors they get logged but you
-// otherwise won't know.)
-func (r *remote) uploadData(data io.Reader, remotePath string) (ready chan bool, finished chan bool) {
+// upload actually completes. (If there are any errors they get logged and
+// finished receives false.)
+func (r *remote) uploadData(data io.ReadCloser, remotePath string) (ready chan bool, finished chan bool) {
 	// upload, with automatic retries
 	rf := func() error {
 		return r.accessor.UploadData(data, remotePath)
@@ -305,12 +327,21 @@ func (r *remote) uploadData(data io.Reader, remotePath string) (ready chan bool,
 	ready = make(chan bool)
 	finished = make(chan bool)
 	go func() {
+		sentReady := make(chan bool)
 		go func() {
 			<-time.After(50 * time.Millisecond)
 			ready <- true
+			sentReady <- true
 		}()
-		r.retry("UploadData", remotePath, rf)
-		finished <- true
+		status := r.retry("UploadData", remotePath, rf)
+		<-sentReady // in case rf completes in less than 50ms
+		if status == fuse.OK {
+			finished <- true
+		} else {
+			data.Close()
+			finished <- false
+			r.accessor.DeleteIncompleteUpload(remotePath)
+		}
 	}()
 	return
 }

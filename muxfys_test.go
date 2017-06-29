@@ -142,9 +142,19 @@ func (a *localAccessor) DeleteFile(path string) error {
 	return os.Remove(path)
 }
 
+// DeleteIncompleteUpload implements RemoteAccessor by deferring to local fs.
+func (a *localAccessor) DeleteIncompleteUpload(path string) {
+	os.Remove(path)
+}
+
 // ErrorIsNotExists implements RemoteAccessor by deferring to os.
 func (a *localAccessor) ErrorIsNotExists(err error) bool {
 	return os.IsNotExist(err)
+}
+
+// ErrorIsNoQuota implements RemoteAccessor by deferring to os.
+func (a *localAccessor) ErrorIsNoQuota(err error) bool {
+	return false // *** is there a standard error for running out of disk space?
 }
 
 // Target implements RemoteAccessor by returning the initial target we were

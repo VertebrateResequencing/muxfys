@@ -282,6 +282,9 @@ func (a *S3Accessor) UploadFile(source, dest, contentType string) error {
 
 // UploadData implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) UploadData(data io.Reader, dest string) error {
+	//*** PutObjectStreaming has a fixed large read size which kills memory;
+	// try and do our own buffered read to initially get the mime type and then
+	// use a different minio method...
 	_, err := a.client.PutObjectStreaming(a.bucket, dest, data)
 	return err
 }
@@ -329,11 +332,23 @@ func (a *S3Accessor) DeleteFile(path string) error {
 	return a.client.RemoveObject(a.bucket, path)
 }
 
+// DeleteIncompleteUpload implements RemoteAccessor by deferring to minio.
+func (a *S3Accessor) DeleteIncompleteUpload(path string) {
+	a.client.RemoveIncompleteUpload(a.bucket, path)
+}
+
 // ErrorIsNotExists implements RemoteAccessor by looking for the NoSuchKey error
 // code.
 func (a *S3Accessor) ErrorIsNotExists(err error) bool {
 	merr, ok := err.(minio.ErrorResponse)
 	return ok && merr.Code == "NoSuchKey"
+}
+
+// ErrorIsNoQuota implements RemoteAccessor by looking for the QuotaExceeded
+// error code.
+func (a *S3Accessor) ErrorIsNoQuota(err error) bool {
+	merr, ok := err.(minio.ErrorResponse)
+	return ok && merr.Code == "QuotaExceeded"
 }
 
 // Target implements RemoteAccessor by returning the initial target we were
