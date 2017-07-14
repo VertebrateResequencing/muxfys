@@ -51,15 +51,14 @@ const (
 type S3Config struct {
 	// The full URL of your bucket and possible sub-path, eg.
 	// https://cog.domain.com/bucket/subpath. For performance reasons, you
-	// should specify the deepest subpath that holds all your files. This will
-	// be set for you by a call to ReadEnvironment().
+	// should specify the deepest subpath that holds all your files.
 	Target string
 
-	// Region is optional if you need to use a specific region. This can be set
-	// for you by a call to ReadEnvironment().
+	// Region is optional if you need to use a specific region.
 	Region string
 
-	// AccessKey and SecretKey can be set for you by calling ReadEnvironment().
+	// AccessKey and SecretKey are your access credentials, and could be empty
+	// strings for access to a public bucket.
 	AccessKey string
 	SecretKey string
 }
@@ -134,7 +133,7 @@ func S3ConfigFromEnvironment(profile, path string) (c *S3Config, err error) {
 
 	aws, err := ini.LooseLoad(s3cfg, ascf, acred, aconf, acon)
 	if err != nil {
-		return nil, fmt.Errorf("muxfys ReadEnvironment() loose loading of config files failed: %s", err)
+		return nil, fmt.Errorf("S3ConfigFromEnvironment() loose loading of config files failed: %s", err)
 	}
 
 	var domain, key, secret, region string
@@ -147,7 +146,7 @@ func S3ConfigFromEnvironment(profile, path string) (c *S3Config, err error) {
 		key = section.Key("access_key").MustString(section.Key("aws_access_key_id").MustString(os.Getenv("AWS_ACCESS_KEY_ID")))
 		secret = section.Key("secret_key").MustString(section.Key("aws_secret_access_key").MustString(os.Getenv("AWS_SECRET_ACCESS_KEY")))
 	} else if profileSpecified {
-		return nil, fmt.Errorf("muxfys ReadEnvironment(%s) called, but no config files defined that profile", profile)
+		return nil, fmt.Errorf("S3ConfigFromEnvironment could not find config files with profile %s", profile)
 	}
 
 	if key == "" && secret == "" {
@@ -324,7 +323,8 @@ func (a *S3Accessor) Seek(rc io.ReadCloser, offset int64) error {
 
 // CopyFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) CopyFile(source, dest string) error {
-	return a.client.CopyObject(a.bucket, dest, a.bucket+"/"+source, minio.CopyConditions{})
+	destInfo, _ := minio.NewDestinationInfo(a.bucket, dest, nil, nil)
+	return a.client.CopyObject(destInfo, minio.NewSourceInfo(a.bucket, source, nil))
 }
 
 // DeleteFile implements RemoteAccessor by deferring to minio.
