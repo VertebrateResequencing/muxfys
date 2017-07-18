@@ -2776,6 +2776,94 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		})
 	})
 
+	Convey("For non-existent paths...", t, func() {
+		manualConfig.Target = target + "/nonexistent/subdir"
+		accessor, err = NewS3Accessor(manualConfig)
+		So(err, ShouldBeNil)
+
+		Convey("You can mount them read-only", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessor,
+				CacheData: true,
+				Write:     false,
+			}
+			fs, err := New(cfg)
+			So(err, ShouldBeNil)
+
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+			defer fs.Unmount()
+
+			Convey("Getting the contents of the dir works", func() {
+				entries, err := ioutil.ReadDir(mountPoint)
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 0)
+			})
+		})
+
+		Convey("You can mount them writeable and writes work", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessor,
+				CacheData: false,
+				Write:     true,
+			}
+			fs, err := New(cfg)
+			So(err, ShouldBeNil)
+
+			err = fs.Mount(remoteConfig)
+			defer func() {
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+			}()
+			So(err, ShouldBeNil)
+
+			entries, err := ioutil.ReadDir(mountPoint)
+			So(err, ShouldBeNil)
+			So(len(entries), ShouldEqual, 0)
+
+			path := mountPoint + "/write.test"
+			b := []byte("write test\n")
+			err = ioutil.WriteFile(path, b, 0644)
+			So(err, ShouldBeNil)
+
+			defer func() {
+				err = os.Remove(path)
+				So(err, ShouldBeNil)
+			}()
+
+			// you can immediately read it back
+			bytes, err := ioutil.ReadFile(path)
+			So(err, ShouldBeNil)
+			So(bytes, ShouldResemble, b)
+
+			// and it's statable and listable
+			_, err = os.Stat(path)
+			So(err, ShouldBeNil)
+
+			entries, err = ioutil.ReadDir(mountPoint)
+			So(err, ShouldBeNil)
+			details := dirDetails(entries)
+			rootEntries := []string{"write.test:file:11"}
+			So(details, ShouldResemble, rootEntries)
+
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+
+			// remounting lets us read the file again - it actually got
+			// uploaded
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+
+			bytes, err = ioutil.ReadFile(path)
+			So(err, ShouldBeNil)
+			So(bytes, ShouldResemble, b)
+		})
+	})
+
 	if strings.HasPrefix(target, "https://cog.sanger.ac.uk") {
 		Convey("You can mount a public bucket", t, func() {
 			manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository"

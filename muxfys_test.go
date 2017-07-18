@@ -48,6 +48,11 @@ func (a *localAccessor) copyFile(source, dest string) (err error) {
 		return
 	}
 	defer in.Close()
+	dir := filepath.Dir(dest)
+	err = os.MkdirAll(dir, 0700)
+	if err != nil {
+		return
+	}
 	out, err := os.Create(dest)
 	if err != nil {
 		return
@@ -82,6 +87,11 @@ func (a *localAccessor) UploadFile(source, dest, contentType string) error {
 func (a *localAccessor) UploadData(data io.Reader, dest string) (err error) {
 	if uploadFail {
 		return fmt.Errorf("upload failed")
+	}
+	dir := filepath.Dir(dest)
+	err = os.MkdirAll(dir, 0700)
+	if err != nil {
+		return
 	}
 	out, err := os.Create(dest)
 	if err != nil {
@@ -204,6 +214,11 @@ func TestMuxFys(t *testing.T) {
 
 	accessor := &localAccessor{
 		target: sourcePoint,
+	}
+
+	sourceSubDir := filepath.Join(sourcePoint, "subdir")
+	accessorNonExistent := &localAccessor{
+		target: sourceSubDir,
 	}
 
 	// for testing purposes we override exitFunc and deathSignals
@@ -500,6 +515,108 @@ func TestMuxFys(t *testing.T) {
 				err = fs.Mount(remoteConfig, remoteConfig)
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldEqual, "You can't have more than one writeable remote")
+			})
+		})
+
+		Convey("You can Mount() read-only to a non-existent sub-dir", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessorNonExistent,
+				CacheData: false,
+				Write:     false,
+			}
+			err := fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+			defer fs.Unmount()
+
+			Convey("Getting the contents of the dir works", func() {
+				entries, err := ioutil.ReadDir(explicitMount)
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 0)
+			})
+		})
+
+		Convey("You can Mount() writable cached to a non-existent sub-dir", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessorNonExistent,
+				CacheData: true,
+				Write:     true,
+			}
+			err := fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+			defer fs.Unmount()
+			defer os.RemoveAll(sourceSubDir)
+
+			Convey("You can Unmount()", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
+			})
+
+			Convey("Getting the contents of the dir works", func() {
+				entries, err := ioutil.ReadDir(explicitMount)
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 0)
+			})
+
+			Convey("Unmounting after creating a file uploads it", func() {
+				sourceFile1 := filepath.Join(sourceSubDir, "created1.file")
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldNotBeNil)
+
+				f, err := os.OpenFile(filepath.Join(explicitMount, "created1.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				f.Close()
+				defer os.Remove(sourceFile1)
+
+				// doesn't exist prior to unmount
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldNotBeNil)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+
+				// does exist afterwards
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldBeNil)
+			})
+		})
+
+		Convey("You can Mount() writable uncached to a non-existent sub-dir", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessorNonExistent,
+				CacheData: false,
+				Write:     true,
+			}
+			err := fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+			defer fs.Unmount()
+			defer os.RemoveAll(sourceSubDir)
+
+			Convey("You can Unmount()", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+			})
+
+			Convey("Getting the contents of the dir works", func() {
+				entries, err := ioutil.ReadDir(explicitMount)
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 0)
+			})
+
+			Convey("Creating a file immediately uploads it", func() {
+				sourceFile1 := filepath.Join(sourceSubDir, "created1.file")
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldNotBeNil)
+
+				f, err := os.OpenFile(filepath.Join(explicitMount, "created1.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				f.Close()
+				defer os.Remove(sourceFile1)
+
+				// exists prior to unmount
+				<-time.After(50 * time.Millisecond)
+				_, err = os.Stat(sourceFile1)
+				So(err, ShouldBeNil)
 			})
 		})
 

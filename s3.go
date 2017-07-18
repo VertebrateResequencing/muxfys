@@ -263,7 +263,10 @@ func NewS3Accessor(config *S3Config) (a *S3Accessor, err error) {
 	if config.Region != "" {
 		a.client, err = minio.NewWithRegion(host, config.AccessKey, config.SecretKey, secure, config.Region)
 	} else {
-		a.client, err = minio.New(host, config.AccessKey, config.SecretKey, secure)
+		// *** we are temporarily forcing use of V2 signatures for full
+		// compatibility with ceph and uploading 0 byte files; hopefully
+		// minio-go or ceph gets bugfixed to avoid this...
+		a.client, err = minio.NewV2(host, config.AccessKey, config.SecretKey, secure)
 	}
 	return
 }
