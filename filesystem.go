@@ -163,7 +163,17 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 	}
 
 	objects, status := r.findObjects(remotePath)
-	if status != fuse.OK {
+	if status != fuse.OK || len(objects) == 0 {
+		if name == "" {
+			// allow the root to be a non-existent directory
+			fs.mutex.Lock()
+			fs.dirs[name] = append(fs.dirs[name], r)
+			fs.dirContents[name] = []fuse.DirEntry{}
+			fs.mutex.Unlock()
+			status = fuse.OK
+		} else if status == fuse.OK {
+			status = fuse.ENOENT
+		}
 		return
 	}
 
@@ -863,9 +873,8 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 
 	if r.cacheData {
 		return newCachedFile(r, remotePath, localPath, attr, uint32(int(flags)|os.O_CREATE), fs.Logger), fuse.OK
-	} else {
-		return newRemoteFile(r, remotePath, attr, true), fuse.OK
 	}
+	return newRemoteFile(r, remotePath, attr, true), fuse.OK
 }
 
 // addNewEntryToItsDir adds a DirEntry for the file/dir named name to that
