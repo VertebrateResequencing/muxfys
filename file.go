@@ -307,11 +307,14 @@ func (f *cachedFile) InnerFile() nodefs.File {
 // attr.
 func (f *cachedFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
 	n, s := f.InnerFile().Write(data, offset)
-	f.attr.Size += uint64(n)
+	size := uint64(offset) + uint64(n)
+	if size > f.attr.Size {
+		f.attr.Size = size // instead of += n, since offsets could come out of order
+	}
 	mTime := uint64(time.Now().Unix())
 	f.attr.Mtime = mTime
 	f.attr.Atime = mTime
-	f.r.Cached(f.localPath, NewInterval(offset, int64(len(data))))
+	f.r.Cached(f.localPath, NewInterval(offset, int64(n)))
 	return n, s
 }
 

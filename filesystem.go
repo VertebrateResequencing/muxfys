@@ -50,6 +50,8 @@ const (
 // remote the file came from. If not known, returns ENOENT (which should never
 // happen).
 func (fs *MuxFys) fileDetails(name string, shouldBeWritable bool) (attr *fuse.Attr, r *remote, status fuse.Status) {
+	fs.mapMutex.RLock()
+	defer fs.mapMutex.RUnlock()
 	attr, exists := fs.files[name]
 	if !exists {
 		return nil, nil, fuse.ENOENT
@@ -83,6 +85,8 @@ func (fs *MuxFys) StatFs(name string) *fuse.StatfsOut {
 
 // OnMount prepares MuxFys for use once Mount() has been called.
 func (fs *MuxFys) OnMount(nodeFs *pathfs.PathNodeFs) {
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
 	// we need to establish that the root directory is a directory; the next
 	// attempt by the user to get it's contents will actually do the remote call
 	// to get the directory entries
@@ -92,6 +96,9 @@ func (fs *MuxFys) OnMount(nodeFs *pathfs.PathNodeFs) {
 // GetAttr finds out about a given object, returning information from a
 // permanent cache if possible. context is not currently used.
 func (fs *MuxFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, status fuse.Status) {
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
+
 	if _, isDir := fs.dirs[name]; isDir {
 		attr = fs.dirAttr
 		status = fuse.OK
@@ -112,7 +119,14 @@ func (fs *MuxFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, 
 		parent = ""
 	}
 	if _, cached := fs.dirContents[parent]; !cached {
-		fs.OpenDir(parent, context)
+		// we must populate the contents of parent first, doing the essential
+		// part of OpenDir()
+		if remotes, exists := fs.dirs[parent]; exists {
+			for _, r := range remotes {
+				fs.openDir(r, parent)
+			}
+		}
+
 		if _, isDir := fs.dirs[name]; isDir {
 			attr = fs.dirAttr
 			status = fuse.OK
@@ -131,6 +145,9 @@ func (fs *MuxFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, 
 // also caches the attributes of all the files within. context is not currently
 // used.
 func (fs *MuxFys) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
+
 	remotes, exists := fs.dirs[name]
 	if !exists {
 		return nil, fuse.ENOENT
@@ -155,7 +172,8 @@ func (fs *MuxFys) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, 
 }
 
 // openDir gets the contents of the given name, treating it as a directory,
-// caching the attributes of its contents.
+// caching the attributes of its contents. Must be called while you have the
+// mapMutex Locked.
 func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 	remotePath := r.getRemotePath(name)
 	if remotePath != "" {
@@ -163,13 +181,12 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 	}
 
 	objects, status := r.findObjects(remotePath)
+
 	if status != fuse.OK || len(objects) == 0 {
 		if name == "" {
 			// allow the root to be a non-existent directory
-			fs.mutex.Lock()
 			fs.dirs[name] = append(fs.dirs[name], r)
 			fs.dirContents[name] = []fuse.DirEntry{}
-			fs.mutex.Unlock()
 			status = fuse.OK
 		} else if status == fuse.OK {
 			status = fuse.ENOENT
@@ -191,7 +208,6 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 			continue
 		}
 
-		fs.mutex.Lock()
 		if strings.HasSuffix(d.Name, "/") {
 			d.Mode = uint32(fuse.S_IFDIR)
 			d.Name = d.Name[0 : len(d.Name)-1]
@@ -212,7 +228,6 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 			fs.fileToRemote[thisPath] = r
 		}
 		fs.dirContents[name] = append(fs.dirContents[name], d)
-		fs.mutex.Unlock()
 
 		// for efficiency, instead of breaking here, we'll keep looping and
 		// cache all the dir contents; this does mean we'll never see externally
@@ -221,13 +236,11 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 	status = fuse.OK
 
 	if isDir {
-		fs.mutex.Lock()
 		fs.dirs[name] = append(fs.dirs[name], r)
 		if _, exists := fs.dirContents[name]; !exists {
 			// empty dir, we must create an entry in this map
 			fs.dirContents[name] = []fuse.DirEntry{}
 		}
-		fs.mutex.Unlock()
 	} else {
 		status = fuse.ENOENT
 	}
@@ -286,10 +299,15 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 			r.Warn("Cached size differs", "path", name, "localSize", localStats.Size(), "remoteSize", attr.Size)
 			os.Remove(localPath)
 			create = true
+			if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {
+				attr.Size = uint64(0)
+			}
 		}
 	}
 
 	if create {
+		r.CacheDelete(localPath)
+
 		if !r.cacheIsTmp || int(flags)&os.O_APPEND != 0 {
 			// download whole remote object to disk before user appends anything
 			// to it; if we just append to the sparse file then on upload we
@@ -390,6 +408,8 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 func (fs *MuxFys) Chmod(name string, mode uint32, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
 	if status == fuse.ENOENT {
+		fs.mapMutex.RLock()
+		defer fs.mapMutex.RUnlock()
 		if _, exists := fs.dirs[name]; exists {
 			return fuse.OK
 		}
@@ -401,6 +421,8 @@ func (fs *MuxFys) Chmod(name string, mode uint32, context *fuse.Context) fuse.St
 func (fs *MuxFys) Chown(name string, uid uint32, gid uint32, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
 	if status == fuse.ENOENT {
+		fs.mapMutex.RLock()
+		defer fs.mapMutex.RUnlock()
 		if _, exists := fs.dirs[name]; exists {
 			return fuse.OK
 		}
@@ -432,8 +454,8 @@ func (fs *MuxFys) Symlink(source string, dest string, context *fuse.Context) (st
 	}
 
 	// note the existence of dest without making it uploadable on unmount
+	fs.mapMutex.Lock()
 	fs.addNewEntryToItsDir(dest, fuse.S_IFLNK)
-	fs.mutex.Lock()
 	mTime := uint64(time.Now().Unix())
 	attr := &fuse.Attr{
 		Mode:  fuse.S_IFLNK | uint32(fileMode),
@@ -444,7 +466,7 @@ func (fs *MuxFys) Symlink(source string, dest string, context *fuse.Context) (st
 	}
 	fs.files[dest] = attr
 	fs.fileToRemote[dest] = fs.writeRemote
-	fs.mutex.Unlock()
+	fs.mapMutex.Unlock()
 
 	return fuse.OK
 }
@@ -465,6 +487,8 @@ func (fs *MuxFys) Readlink(name string, context *fuse.Context) (out string, stat
 func (fs *MuxFys) SetXAttr(name string, attr string, data []byte, flags int, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
 	if status == fuse.ENOENT {
+		fs.mapMutex.RLock()
+		defer fs.mapMutex.RUnlock()
 		if _, exists := fs.dirs[name]; exists {
 			return fuse.OK
 		}
@@ -476,6 +500,8 @@ func (fs *MuxFys) SetXAttr(name string, attr string, data []byte, flags int, con
 func (fs *MuxFys) RemoveXAttr(name string, attr string, context *fuse.Context) fuse.Status {
 	_, _, status := fs.fileDetails(name, true)
 	if status == fuse.ENOENT {
+		fs.mapMutex.RLock()
+		defer fs.mapMutex.RUnlock()
 		if _, exists := fs.dirs[name]; exists {
 			return fuse.OK
 		}
@@ -490,6 +516,8 @@ func (fs *MuxFys) RemoveXAttr(name string, attr string, context *fuse.Context) f
 func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) (status fuse.Status) {
 	attr, r, status := fs.fileDetails(name, true)
 	if status == fuse.ENOENT {
+		fs.mapMutex.RLock()
+		defer fs.mapMutex.RUnlock()
 		if _, exists := fs.dirs[name]; exists {
 			return fuse.OK
 		}
@@ -585,7 +613,9 @@ func (fs *MuxFys) Truncate(name string, offset uint64, context *fuse.Context) fu
 		// update attr and claim we created this file
 		attr.Size = offset
 		attr.Mtime = uint64(time.Now().Unix())
+		fs.mapMutex.Lock()
 		fs.createdFiles[name] = true
+		fs.mapMutex.Unlock()
 
 		return fuse.OK
 	}
@@ -598,6 +628,9 @@ func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 	if fs.writeRemote == nil {
 		return fuse.EPERM
 	}
+
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
 
 	if _, isDir := fs.dirs[name]; isDir {
 		return fuse.OK
@@ -626,13 +659,13 @@ func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 			err = os.Mkdir(localPath, os.FileMode(dirMode))
 		}
 		if err != nil {
+			fs.mapMutex.Unlock()
 			return fuse.ToStatus(err)
 		}
 	}
 
 	// we mark its existence internally but don't do anything "physical"
 	// to create the dir remotely (applies for cached and uncached modes)
-	fs.mutex.Lock()
 	fs.dirs[name] = append(fs.dirs[name], fs.writeRemote)
 	if _, exists := fs.dirContents[name]; !exists {
 		fs.dirContents[name] = []fuse.DirEntry{}
@@ -640,7 +673,6 @@ func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 	if fs.writeRemote.cacheData {
 		fs.createdDirs[name] = true
 	}
-	fs.mutex.Unlock()
 	fs.addNewEntryToItsDir(name, fuse.S_IFDIR)
 	return fuse.OK
 }
@@ -651,6 +683,9 @@ func (fs *MuxFys) Rmdir(name string, context *fuse.Context) fuse.Status {
 	if fs.writeRemote == nil {
 		return fuse.EPERM
 	}
+
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
 
 	if _, isDir := fs.dirs[name]; !isDir {
 		return fuse.ENOENT
@@ -668,11 +703,9 @@ func (fs *MuxFys) Rmdir(name string, context *fuse.Context) fuse.Status {
 
 	}
 
-	fs.mutex.Lock()
 	delete(fs.dirs, name)
 	delete(fs.createdDirs, name)
 	delete(fs.dirContents, name)
-	fs.mutex.Unlock()
 	fs.rmEntryFromItsDir(name)
 
 	return fuse.OK
@@ -689,6 +722,9 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 	if fs.writeRemote == nil {
 		return fuse.EPERM
 	}
+
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
 
 	var isDir bool
 	if _, isDir = fs.dirs[oldPath]; !isDir {
@@ -722,14 +758,12 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 				// now try and rename the cached dir
 				if err = os.Rename(fs.writeRemote.getLocalPath(remotePathOld), localPathNew); err == nil {
 					// update our knowledge of what dirs we have
-					fs.mutex.Lock()
 					fs.dirs[newPath] = fs.dirs[oldPath]
 					fs.dirContents[newPath] = fs.dirContents[oldPath]
 					fs.createdDirs[newPath] = true
 					delete(fs.dirs, oldPath)
 					delete(fs.createdDirs, oldPath)
 					delete(fs.dirContents, oldPath)
-					fs.mutex.Unlock()
 					fs.rmEntryFromItsDir(oldPath)
 					fs.addNewEntryToItsDir(newPath, fuse.S_IFDIR)
 				}
@@ -766,18 +800,23 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 		}
 
 		// cache the existence of the new file
-		fs.mutex.Lock()
 		fs.files[newPath] = fs.files[oldPath]
 		fs.fileToRemote[newPath] = fs.fileToRemote[oldPath]
 		if _, created := fs.createdFiles[oldPath]; created {
 			fs.createdFiles[newPath] = true
 			delete(fs.createdFiles, oldPath)
 		}
-		fs.mutex.Unlock()
 		fs.addNewEntryToItsDir(newPath, fuse.S_IFREG)
 
 		// finally unlink oldPath remotely
-		fs.Unlink(oldPath, context)
+		r := fs.fileToRemote[oldPath]
+		if r != nil {
+			r.deleteFile(remotePathOld)
+		}
+		delete(fs.files, oldPath)
+		delete(fs.fileToRemote, oldPath)
+		delete(fs.createdFiles, oldPath)
+		fs.rmEntryFromItsDir(oldPath)
 
 		return fuse.OK
 	}
@@ -807,11 +846,12 @@ func (fs *MuxFys) Unlink(name string, context *fuse.Context) fuse.Status {
 		return status
 	}
 
-	fs.mutex.Lock()
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
+
 	delete(fs.files, name)
 	delete(fs.fileToRemote, name)
 	delete(fs.createdFiles, name)
-	fs.mutex.Unlock()
 
 	// remove the directory entry as well
 	fs.rmEntryFromItsDir(name)
@@ -846,14 +886,14 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 		defer fmutex.Unlock()
 	}
 
-	fs.mutex.Lock()
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
+
 	attr, existed := fs.files[name]
 	mTime := uint64(time.Now().Unix())
 	if !existed {
 		// add to our directory entries for this file's dir
-		fs.mutex.Unlock()
 		fs.addNewEntryToItsDir(name, fuse.S_IFREG)
-		fs.mutex.Lock()
 
 		attr = &fuse.Attr{
 			Mode:  fuse.S_IFREG | uint32(fileMode),
@@ -869,7 +909,6 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 		attr.Atime = mTime
 	}
 	fs.createdFiles[name] = true
-	fs.mutex.Unlock()
 
 	if r.cacheData {
 		return newCachedFile(r, remotePath, localPath, attr, uint32(int(flags)|os.O_CREATE), fs.Logger), fuse.OK
@@ -879,7 +918,7 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 
 // addNewEntryToItsDir adds a DirEntry for the file/dir named name to that
 // object's containing directory entries. mode should be fuse.S_IFREG or
-// fuse.S_IFDIR.
+// fuse.S_IFDIR. Must be called while you have the mapMutex Locked.
 func (fs *MuxFys) addNewEntryToItsDir(name string, mode int) {
 	d := fuse.DirEntry{
 		Name: filepath.Base(name),
@@ -889,25 +928,29 @@ func (fs *MuxFys) addNewEntryToItsDir(name string, mode int) {
 	if parent == "." {
 		parent = ""
 	}
+
 	if _, exists := fs.dirContents[parent]; !exists {
-		// we must populate the contents of parent first
-		fs.OpenDir(parent, &fuse.Context{})
+		// we must populate the contents of parent first, doing the essential
+		// part of OpenDir()
+		if remotes, exists := fs.dirs[parent]; exists {
+			for _, r := range remotes {
+				fs.openDir(r, parent)
+			}
+		}
 	}
-	fs.mutex.Lock()
 	fs.dirContents[parent] = append(fs.dirContents[parent], d)
-	fs.mutex.Unlock()
 }
 
 // rmEntryFromItsDir removes a DirEntry for the file/dir named name from that
-// object's containing directory entries.
+// object's containing directory entries. Must be called while you have the
+// mapMutex Locked.
 func (fs *MuxFys) rmEntryFromItsDir(name string) {
 	parent := filepath.Dir(name)
 	if parent == "." {
 		parent = ""
 	}
 	baseName := filepath.Base(name)
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
+
 	if dentries, exists := fs.dirContents[parent]; exists {
 		for i, entry := range dentries {
 			if entry.Name == baseName {

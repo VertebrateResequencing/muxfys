@@ -189,6 +189,7 @@ type MuxFys struct {
 	dirAttr         *fuse.Attr
 	server          *fuse.Server
 	mutex           sync.Mutex
+	mapMutex        sync.RWMutex
 	dirs            map[string][]*remote
 	dirContents     map[string][]fuse.DirEntry
 	files           map[string]*fuse.Attr
@@ -356,13 +357,16 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) (err error) {
 		IgnoreSecurityLabels: true,
 		Debug:                false,
 	}
-	server, err := fuse.NewServer(conn.RawFS(), fs.mountPoint, mOpts)
+	fs.server, err = fuse.NewServer(conn.RawFS(), fs.mountPoint, mOpts)
 	if err != nil {
 		return
 	}
 
-	fs.server = server
-	go server.Serve()
+	go fs.server.Serve()
+	err = fs.server.WaitMount()
+	if err != nil {
+		return
+	}
 
 	fs.mounted = true
 	return
@@ -457,6 +461,7 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 		if err == nil {
 			fs.mounted = false
 		}
+		// <-time.After(10 * time.Second)
 	}
 
 	if !(len(doNotUpload) > 0 && doNotUpload[0]) {
@@ -475,17 +480,23 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 	for _, remote := range fs.remotes {
 		if remote.cacheIsTmp {
 			remote.deleteCache()
+			// *** this can fail on nfs due to "device or resource busy", but
+			// retrying doesn't help. Waiting 10s immediately before or after
+			// a failure also doesn't help; you have to always wait 10s after
+			// fs.server.Unmount() to be able to delete the cache!
 		}
 	}
 
 	// clean out our caches; one reason to unmount is to force recognition of
 	// new files when we re-mount
+	fs.mapMutex.Lock()
 	fs.dirs = make(map[string][]*remote)
 	fs.dirContents = make(map[string][]fuse.DirEntry)
 	fs.files = make(map[string]*fuse.Attr)
 	fs.fileToRemote = make(map[string]*remote)
 	fs.createdFiles = make(map[string]bool)
 	fs.createdDirs = make(map[string]bool)
+	fs.mapMutex.Unlock()
 
 	// forget our remotes so we can be remounted with other remotes
 	fs.remotes = nil
@@ -503,6 +514,7 @@ func (fs *MuxFys) uploadCreated() error {
 		// since mtimes in S3 are stored as the upload time, we sort our created
 		// files by their mtime to at least upload them in the correct order
 		var createdFiles []string
+		fs.mapMutex.Lock()
 		for name := range fs.createdFiles {
 			createdFiles = append(createdFiles, name)
 		}
@@ -525,6 +537,7 @@ func (fs *MuxFys) uploadCreated() error {
 
 			delete(fs.createdFiles, name)
 		}
+		fs.mapMutex.Unlock()
 
 		if fails > 0 {
 			return fmt.Errorf("failed to upload %d files", fails)

@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -150,6 +151,7 @@ type remote struct {
 	maxAttempts   int
 	write         bool
 	clientBackoff *backoff.Backoff
+	cbMutex       sync.Mutex
 	log15.Logger
 }
 
@@ -239,7 +241,9 @@ ATTEMPTS:
 			return fuse.EIO
 		}
 		r.Info("Remote call succeeded", "call", clientMethod, "path", path, "walltime", time.Since(start))
+		r.cbMutex.Lock()
 		r.clientBackoff.Reset()
+		r.cbMutex.Unlock()
 		return fuse.OK
 	}
 }
@@ -432,7 +436,8 @@ func (r *remote) deleteFile(remotePath string) fuse.Status {
 // deleteCache physically deletes the whole cache directory and erases our
 // knowledge of what parts of what files we have cached. You'd probably call
 // this when unmounting, only if cacheIsTmp was true.
-func (r *remote) deleteCache() {
-	os.RemoveAll(r.cacheDir)
+func (r *remote) deleteCache() (err error) {
+	err = os.RemoveAll(r.cacheDir)
 	r.CacheWipe()
+	return
 }

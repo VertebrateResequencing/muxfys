@@ -7,7 +7,7 @@ GO_FILES := $(shell find . -name '*.go' | grep -v /vendor/)
 default: report
 
 test:
-	@go test -p 1 -tags netgo ${PKG_LIST}
+	@go test -p 1 -tags netgo -race ${PKG_LIST}
 
 report: lint vet inef spell
 
