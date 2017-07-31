@@ -27,10 +27,10 @@ package muxfys
 
 import (
 	"bufio"
-	"github.com/alexflint/go-filemutex"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
+	"github.com/sb10/go-filemutex"
 	"io"
 	"os"
 	"path/filepath"
@@ -264,7 +264,7 @@ func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file n
 	}
 
 	if r.cacheData {
-		file, status = fs.openCached(r, name, flags, context, attr)
+		file, status = fs.openCached(r, name, flags, context, attr, checkWritable)
 	} else {
 		file = newRemoteFile(r, r.getRemotePath(name), attr, false)
 	}
@@ -278,7 +278,7 @@ func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file n
 
 // openCached defers all subsequent read/write operations to a CachedFile for
 // that local file.
-func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse.Context, attr *fuse.Attr) (nodefs.File, fuse.Status) {
+func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse.Context, attr *fuse.Attr, writeMode bool) (nodefs.File, fuse.Status) {
 	remotePath := r.getRemotePath(name)
 	localPath := r.getLocalPath(remotePath)
 
@@ -293,7 +293,7 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 	if err != nil {
 		os.Remove(localPath)
 		create = true
-	} else {
+	} else if !writeMode {
 		// check the file is the right size
 		if localStats.Size() != int64(attr.Size) {
 			r.Warn("Cached size differs", "path", name, "localSize", localStats.Size(), "remoteSize", attr.Size)
@@ -316,7 +316,7 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 			// and could be in use simultaneously by other muxfys mounts
 			// *** alternatively we could store Invervals in the lock file...
 			if status := r.downloadFile(remotePath, localPath); status != fuse.OK {
-				fmutex.Unlock()
+				fmutex.Close()
 				return nil, status
 			}
 
@@ -325,12 +325,12 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 			if err != nil {
 				r.Error("Downloaded file could not be accessed", "path", localPath, "err", err)
 				os.Remove(localPath)
-				fmutex.Unlock()
+				fmutex.Close()
 				return nil, fuse.ToStatus(err)
 			} else if localStats.Size() != int64(attr.Size) {
 				os.Remove(localPath)
 				r.Error("Downloaded size is wrong", "path", remotePath, "localSize", localStats.Size(), "remoteSize", attr.Size)
-				fmutex.Unlock()
+				fmutex.Close()
 				return nil, fuse.EIO
 			}
 			r.CacheOverride(localPath, NewInterval(0, int64(attr.Size)))
@@ -339,11 +339,11 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 			// file that Read() operations will cache in to
 			f, err := os.Create(localPath)
 			if err != nil {
-				fmutex.Unlock()
+				fmutex.Close()
 				return nil, fuse.ToStatus(err)
 			}
 			if err := f.Truncate(int64(attr.Size)); err != nil {
-				fmutex.Unlock()
+				fmutex.Close()
 				return nil, fuse.ToStatus(err)
 			}
 			f.Close()
@@ -389,18 +389,11 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 
 	// if the flags suggest any kind of write-ability, treat it like we created
 	// the file
-	if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {
-		if int(flags)&os.O_APPEND == 0 {
-			// *** is this the only situation where we don't truncate the file
-			// to 0 length?
-			r.CacheDelete(localPath)
-			attr.Size = uint64(0)
-		}
-		fmutex.Unlock()
-		return fs.Create(name, flags, uint32(fileMode), context)
+	if writeMode {
+		return fs.create(name, flags, uint32(fileMode), fmutex)
 	}
 
-	fmutex.Unlock()
+	fmutex.Close()
 	return newCachedFile(r, remotePath, localPath, attr, flags, fs.Logger), fuse.OK
 }
 
@@ -444,7 +437,7 @@ func (fs *MuxFys) Symlink(source string, dest string, context *fuse.Context) (st
 		return fuse.EIO
 	}
 	fmutex.Lock()
-	defer fmutex.Unlock()
+	defer fmutex.Close()
 
 	// symlink from mount point source to cached dest file
 	err = os.Symlink(source, localPathDest)
@@ -562,7 +555,7 @@ func (fs *MuxFys) Truncate(name string, offset uint64, context *fuse.Context) fu
 			return fuse.EIO
 		}
 		fmutex.Lock()
-		defer fmutex.Unlock()
+		defer fmutex.Close()
 
 		if _, err := os.Stat(localPath); err == nil {
 			// truncate local cached copy
@@ -786,7 +779,7 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 				return fuse.EIO
 			}
 			fmutex.Lock()
-			defer fmutex.Unlock()
+			defer fmutex.Close()
 			fmutex2, err := fs.getFileMutex(localPathNew)
 			if err != nil {
 				return fuse.EIO
@@ -841,19 +834,18 @@ func (fs *MuxFys) Unlink(name string, context *fuse.Context) fuse.Status {
 		r.CacheDelete(localPath)
 	}
 
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
+
+	delete(fs.createdFiles, name)
+
 	status = r.deleteFile(remotePath)
 	if status != fuse.OK {
 		return status
 	}
 
-	fs.mapMutex.Lock()
-	defer fs.mapMutex.Unlock()
-
 	delete(fs.files, name)
 	delete(fs.fileToRemote, name)
-	delete(fs.createdFiles, name)
-
-	// remove the directory entry as well
 	fs.rmEntryFromItsDir(name)
 
 	return fuse.OK
@@ -868,6 +860,12 @@ func (fs *MuxFys) Access(name string, mode uint32, context *fuse.Context) fuse.S
 // configured with CacheData the contents of the created file are only uploaded
 // at Unmount() time.
 func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
+	return fs.create(name, flags, mode)
+}
+
+// create is the implementation of Create() that also takes an optional
+// filemutex that should be Lock()ed (it will be Close()d).
+func (fs *MuxFys) create(name string, flags uint32, mode uint32, fmutex ...*filemutex.FileMutex) (nodefs.File, fuse.Status) {
 	r := fs.writeRemote
 	if r == nil {
 		return nil, fuse.EPERM
@@ -878,12 +876,16 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 	if r.cacheData {
 		localPath = r.getLocalPath(remotePath)
 
-		fmutex, err := fs.getFileMutex(localPath)
-		if err != nil {
-			return nil, fuse.EIO
+		if len(fmutex) == 1 {
+			defer fmutex[0].Close()
+		} else {
+			fm, err := fs.getFileMutex(localPath)
+			if err != nil {
+				return nil, fuse.EIO
+			}
+			fm.Lock()
+			defer fm.Close()
 		}
-		fmutex.Lock()
-		defer fmutex.Unlock()
 	}
 
 	fs.mapMutex.Lock()
@@ -907,6 +909,15 @@ func (fs *MuxFys) Create(name string, flags uint32, mode uint32, context *fuse.C
 	} else {
 		attr.Mtime = mTime
 		attr.Atime = mTime
+
+		// *** when not appending, don't we need to reset to 0? It seems to work
+		// without this, and we avoid incorrect reset to 0 when something
+		// opens many simultaneous non-append writes to write at different
+		// offsets.
+		// if int(flags)&os.O_APPEND == 0 {
+		// 	r.CacheDelete(localPath)
+		// 	attr.Size = uint64(0)
+		// }
 	}
 	fs.createdFiles[name] = true
 

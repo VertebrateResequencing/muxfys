@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -35,6 +36,8 @@ import (
 )
 
 var uploadFail bool
+var resetMutex sync.Mutex
+var resetFail bool
 
 // localAccessor implements RemoteAccessor: it just accesses the local POSIX
 // file system for testing purposes
@@ -112,6 +115,11 @@ func (a *localAccessor) UploadData(data io.Reader, dest string) (err error) {
 
 // ListEntries implements RemoteAccessor by deferring to local fs.
 func (a *localAccessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
+	resetMutex.Lock()
+	defer resetMutex.Unlock()
+	if resetFail {
+		return ras, fmt.Errorf("connection reset by peer")
+	}
 	entries, err := ioutil.ReadDir(dir)
 	if err != nil {
 		return
@@ -215,6 +223,13 @@ func TestMuxFys(t *testing.T) {
 		log.Fatal(err)
 	}
 
+	sourceOtherDir := filepath.Join(sourcePoint, "other")
+	os.MkdirAll(sourceOtherDir, os.FileMode(0777))
+	err = ioutil.WriteFile(filepath.Join(sourceOtherDir, "read2.file"), []byte("test\n"), 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	accessor := &localAccessor{
 		target: sourcePoint,
 	}
@@ -240,6 +255,7 @@ func TestMuxFys(t *testing.T) {
 			Mount:     explicitMount,
 			CacheBase: cacheBase,
 			Verbose:   true,
+			Retries:   2,
 		}
 		fs, err := New(cfg)
 		So(err, ShouldBeNil)
@@ -405,10 +421,72 @@ func TestMuxFys(t *testing.T) {
 					So(logs[1], ShouldContainSubstring, "target="+sourcePoint)
 					So(logs[1], ShouldContainSubstring, "call=UploadFile")
 					So(logs[1], ShouldContainSubstring, "path="+sourceFile)
-					So(logs[1], ShouldContainSubstring, "retries=0")
+					So(logs[1], ShouldContainSubstring, "retries=2")
 					So(logs[1], ShouldContainSubstring, "walltime=")
 					So(logs[1], ShouldContainSubstring, `err="upload failed"`)
 					So(logs[1], ShouldContainSubstring, "caller=remote.go")
+				})
+			})
+
+			Convey("We try the desired number of times to access bad remotes", func() {
+				resetMutex.Lock()
+				resetFail = true
+				resetMutex.Unlock()
+				defer func() {
+					resetMutex.Lock()
+					resetFail = false
+					resetMutex.Unlock()
+				}()
+
+				entries, err := ioutil.ReadDir(explicitMount)
+				So(err, ShouldBeNil) // *** not sure why this doesn't give an err
+				So(len(entries), ShouldEqual, 0)
+
+				Convey("Logs() tells you what happened", func() {
+					logs := fs.Logs()
+					So(len(logs), ShouldEqual, 1)
+					So(logs[0], ShouldContainSubstring, "lvl=eror")
+					So(logs[0], ShouldContainSubstring, `msg="Remote call failed"`)
+					So(logs[0], ShouldContainSubstring, "pkg=muxfys")
+					So(logs[0], ShouldContainSubstring, "mount="+explicitMount)
+					So(logs[0], ShouldContainSubstring, "target="+sourcePoint)
+					So(logs[0], ShouldContainSubstring, "call=ListEntries")
+					So(logs[0], ShouldContainSubstring, "path=/")
+					So(logs[0], ShouldContainSubstring, "retries=2")
+					So(logs[0], ShouldContainSubstring, `err="connection reset by peer"`)
+				})
+			})
+
+			Convey("We try greater than the desired number of times to access a good remote that turns bad", func() {
+				entries, err := ioutil.ReadDir(explicitMount)
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+
+				resetMutex.Lock()
+				resetFail = true
+				resetMutex.Unlock()
+				go func() {
+					<-time.After(1 * time.Second)
+					resetMutex.Lock()
+					resetFail = false
+					resetMutex.Unlock()
+				}()
+
+				entries, err = ioutil.ReadDir(explicitMount + "/other")
+				So(err, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				Convey("Logs() tells you what happened", func() {
+					logs := fs.Logs()
+					So(len(logs), ShouldEqual, 2)
+					So(logs[1], ShouldContainSubstring, "lvl=info")
+					So(logs[1], ShouldContainSubstring, "call=ListEntries")
+					So(logs[1], ShouldContainSubstring, `previous_err="connection reset by peer"`)
+					moreRetries := false
+					if strings.Contains(logs[1], "retries=4") || strings.Contains(logs[1], "retries=5") {
+						moreRetries = true
+					}
+					So(moreRetries, ShouldBeTrue)
 				})
 			})
 
