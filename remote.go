@@ -31,8 +31,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 )
+
+const downRemoteWaitTime = 10 * time.Minute
 
 // RemoteConfig struct is how you configure what you want to mount, and how you
 // want to cache.
@@ -150,6 +154,8 @@ type remote struct {
 	maxAttempts   int
 	write         bool
 	clientBackoff *backoff.Backoff
+	hasWorked     bool
+	cbMutex       sync.Mutex
 	log15.Logger
 }
 
@@ -211,15 +217,21 @@ type retryFunc func() error
 // without error. While a RemoteAccessor implementation may do retries
 // internally, it may not do retries in all circumstances, whereas we want to.
 // It logs errors itself. Does not bother retrying when the error indicates a
-// requested file does not exist or the quota is exceeded.
+// requested file does not exist or the quota is exceeded. "Connection reset by
+// peer" errors are retried (with backoff) for at least 10mins if any remote
+// calls had previously succeeded, potentially exceeding desired number of
+// attempts.
 func (r *remote) retry(clientMethod string, path string, rf retryFunc) fuse.Status {
 	attempts := 0
 	start := time.Now()
+	var lastError error
 ATTEMPTS:
 	for {
 		attempts++
 		err := rf()
 		if err != nil {
+			lastError = err
+
 			// return immediately if key not found or quota exceeded
 			if r.accessor.ErrorIsNotExists(err) {
 				r.Warn("File doesn't exist", "call", clientMethod, "path", path, "walltime", time.Since(start))
@@ -230,16 +242,40 @@ ATTEMPTS:
 				return fuse.ENODATA
 			}
 
+			if strings.Contains(err.Error(), "reset by peer") {
+				// special-case peer resets which could indicate a temporary but
+				// multi-minute downtime
+				r.cbMutex.Lock()
+				if r.hasWorked && time.Since(start) < downRemoteWaitTime {
+					dur := r.clientBackoff.Duration()
+					r.cbMutex.Unlock()
+					<-time.After(dur)
+					continue ATTEMPTS
+				} else {
+					r.cbMutex.Unlock()
+				}
+			}
+
 			// otherwise blindly retry for maxAttempts times
 			if attempts < r.maxAttempts {
-				<-time.After(r.clientBackoff.Duration())
+				r.cbMutex.Lock()
+				dur := r.clientBackoff.Duration()
+				r.cbMutex.Unlock()
+				<-time.After(dur)
 				continue ATTEMPTS
 			}
 			r.Error("Remote call failed", "call", clientMethod, "path", path, "retries", attempts-1, "walltime", time.Since(start), "err", err)
 			return fuse.EIO
 		}
-		r.Info("Remote call succeeded", "call", clientMethod, "path", path, "walltime", time.Since(start))
+		if attempts-1 > 0 {
+			r.Info("Remote call succeeded", "call", clientMethod, "path", path, "walltime", time.Since(start), "retries", attempts-1, "walltime", time.Since(start), "previous_err", lastError)
+		} else {
+			r.Info("Remote call succeeded", "call", clientMethod, "path", path, "walltime", time.Since(start))
+		}
+		r.cbMutex.Lock()
 		r.clientBackoff.Reset()
+		r.hasWorked = true
+		r.cbMutex.Unlock()
 		return fuse.OK
 	}
 }
@@ -432,7 +468,8 @@ func (r *remote) deleteFile(remotePath string) fuse.Status {
 // deleteCache physically deletes the whole cache directory and erases our
 // knowledge of what parts of what files we have cached. You'd probably call
 // this when unmounting, only if cacheIsTmp was true.
-func (r *remote) deleteCache() {
-	os.RemoveAll(r.cacheDir)
+func (r *remote) deleteCache() (err error) {
+	err = os.RemoveAll(r.cacheDir)
 	r.CacheWipe()
+	return
 }
