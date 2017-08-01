@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [2.0.2] - 2017-08-01
+### Changed
+- Remote servers that work but then stop working due to "connection reset by
+  peer" now result in retries for 10mins instead of a fixed number of retries.
+- The logs for successful calls now note if there had been problems, with a
+  "previous_err" and a number of retries.
+
+### Fixed
+- Data race conditions have been eliminated.
+- "Too many open files" problem after many reads/writes.
+- "Cached size differs" problem while doing multithreaded writes to the same
+  file.
+- Written to file seeming to not exist afterwards.
+
+
 ## [2.0.1] - 2017-07-19
 ### Changed
 - V2 signatures are now used for compatibility with Ceph + latest version of
