@@ -29,6 +29,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 )
@@ -42,6 +43,7 @@ type remoteFile struct {
 	mutex         sync.Mutex
 	attr          *fuse.Attr
 	readOffset    int64
+	readWorked    bool
 	reader        io.ReadCloser
 	rpipe         *io.PipeReader
 	wpipe         *io.PipeWriter
@@ -97,7 +99,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 				skippedPos := f.readOffset
 				skipSize := offset - f.readOffset
 				skipped := make([]byte, skipSize, skipSize)
-				status := f.fillBuffer(skipped)
+				status := f.fillBuffer(skipped, offset)
 				if status != fuse.OK {
 					return nil, status
 				}
@@ -122,7 +124,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 	// if opened previously, read from existing reader and return
 	if f.reader != nil {
-		status := f.fillBuffer(buf)
+		status := f.fillBuffer(buf, offset)
 		return fuse.ReadResultData(buf), status
 	}
 
@@ -136,7 +138,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 	// store the reader to read from later
 	f.reader = object
 
-	status = f.fillBuffer(buf)
+	status = f.fillBuffer(buf, offset)
 	if status != fuse.OK {
 		return fuse.ReadResultData([]byte{}), status
 	}
@@ -144,19 +146,31 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 }
 
 // fillBuffer reads from our remote reader to the Read() buffer.
-func (f *remoteFile) fillBuffer(buf []byte) (status fuse.Status) {
+func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 	bytesRead, err := io.ReadFull(f.reader, buf)
 	if err != nil {
 		f.reader.Close()
 		f.reader = nil
-		f.readOffset = 0
 		if err == io.ErrUnexpectedEOF || err == io.EOF {
 			status = fuse.OK
 		} else {
+			if f.readWorked && strings.Contains(err.Error(), "reset by peer") {
+				// if connection reset by peer and a read previously worked
+				// we try getting a new object before trying again, to cope with
+				// temporary networking issues
+				object, goStatus := f.r.getObject(f.path, offset)
+				if goStatus == fuse.OK {
+					f.reader = object
+					f.readWorked = false
+					return f.fillBuffer(buf, offset)
+				}
+			}
 			status = f.r.statusFromErr("Read("+f.path+")", err)
 		}
+		f.readOffset = 0
 		return
 	}
+	f.readWorked = true
 	f.readOffset += int64(bytesRead)
 	return fuse.OK
 }

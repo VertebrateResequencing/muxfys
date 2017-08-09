@@ -39,8 +39,32 @@ var uploadFail bool
 var resetMutex sync.Mutex
 var resetFail bool
 
+// openedObject is what a localAccessor returns from its OpenFile() method. It
+// is just a wrapper around the return value from os.Open that allows us to
+// make reads fails at will, for testing purposes.
+type openedObject struct {
+	object *os.File
+}
+
+func (f *openedObject) Read(b []byte) (int, error) {
+	resetMutex.Lock()
+	defer resetMutex.Unlock()
+	if resetFail {
+		return 0, fmt.Errorf("connection reset by peer")
+	}
+	return f.object.Read(b)
+}
+
+func (f *openedObject) Seek(offset int64, whence int) (int64, error) {
+	return f.object.Seek(offset, whence)
+}
+
+func (f *openedObject) Close() error {
+	return f.object.Close()
+}
+
 // localAccessor implements RemoteAccessor: it just accesses the local POSIX
-// file system for testing purposes
+// file system for testing purposes.
 type localAccessor struct {
 	target string
 }
@@ -140,12 +164,18 @@ func (a *localAccessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
 
 // OpenFile implements RemoteAccessor by deferring to local fs.
 func (a *localAccessor) OpenFile(path string) (io.ReadCloser, error) {
-	return os.Open(path)
+	resetMutex.Lock()
+	defer resetMutex.Unlock()
+	if resetFail {
+		return nil, fmt.Errorf("connection reset by peer")
+	}
+	f, err := os.Open(path)
+	return &openedObject{object: f}, err
 }
 
 // Seek implements RemoteAccessor by deferring to local fs.
 func (a *localAccessor) Seek(rc io.ReadCloser, offset int64) error {
-	object := rc.(*os.File)
+	object := rc.(*openedObject)
 	_, err := object.Seek(offset, io.SeekStart)
 	return err
 }
@@ -218,7 +248,7 @@ func TestMuxFys(t *testing.T) {
 
 	sourcePoint := filepath.Join(tmpdir, "source")
 	os.MkdirAll(sourcePoint, os.FileMode(0777))
-	err = ioutil.WriteFile(filepath.Join(sourcePoint, "read.file"), []byte("test\n"), 0644)
+	err = ioutil.WriteFile(filepath.Join(sourcePoint, "read.file"), []byte("test1\ntest2\n"), 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -229,6 +259,19 @@ func TestMuxFys(t *testing.T) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	f, err := os.Create(filepath.Join(sourcePoint, "large.file"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	for i := 1; i <= 10000; i++ {
+		_, err = f.WriteString(fmt.Sprintf("test%d\n", i))
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	f.Sync()
+	f.Close()
 
 	accessor := &localAccessor{
 		target: sourcePoint,
@@ -317,6 +360,40 @@ func TestMuxFys(t *testing.T) {
 
 				So(i, ShouldEqual, 0)
 			})
+
+			Convey("Reads are retried on connection reset by peer", func() {
+				f, err := os.Open(filepath.Join(explicitMount, "large.file"))
+				So(err, ShouldBeNil)
+				b := make([]byte, 6)
+				_, err = f.Read(b)
+				So(err, ShouldBeNil)
+				So(string(b), ShouldEqual, "test1\n")
+
+				defer func() {
+					f.Close()
+					fs.Unmount()
+				}()
+
+				f.Seek(60003, 0)
+
+				resetMutex.Lock()
+				resetFail = true
+				resetMutex.Unlock()
+				go func() {
+					<-time.After(3 * time.Second)
+					resetMutex.Lock()
+					resetFail = false
+					resetMutex.Unlock()
+				}()
+
+				before := time.Now()
+				b = make([]byte, 9)
+				_, err = f.Read(b)
+				after := time.Since(before)
+				So(err, ShouldBeNil)
+				So(string(b), ShouldEqual, "test6791\n")
+				So(after.Seconds(), ShouldBeGreaterThanOrEqualTo, 3)
+			})
 		})
 
 		Convey("You can Mount() writable cached", func() {
@@ -338,7 +415,7 @@ func TestMuxFys(t *testing.T) {
 			Convey("Unmount() after reading files fully deletes the cache dir", func() {
 				data, err := ioutil.ReadFile(filepath.Join(explicitMount, "read.file"))
 				So(err, ShouldBeNil)
-				So(string(data), ShouldEqual, "test\n")
+				So(string(data), ShouldEqual, "test1\ntest2\n")
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 				So(checkEmpty(cacheBase), ShouldBeTrue)
@@ -460,7 +537,7 @@ func TestMuxFys(t *testing.T) {
 			Convey("We try greater than the desired number of times to access a good remote that turns bad", func() {
 				entries, err := ioutil.ReadDir(explicitMount)
 				So(err, ShouldBeNil)
-				So(len(entries), ShouldEqual, 2)
+				So(len(entries), ShouldEqual, 3)
 
 				resetMutex.Lock()
 				resetFail = true
@@ -483,7 +560,7 @@ func TestMuxFys(t *testing.T) {
 					So(logs[1], ShouldContainSubstring, "call=ListEntries")
 					So(logs[1], ShouldContainSubstring, `previous_err="connection reset by peer"`)
 					moreRetries := false
-					if strings.Contains(logs[1], "retries=4") || strings.Contains(logs[1], "retries=5") {
+					if strings.Contains(logs[1], "retries=3") || strings.Contains(logs[1], "retries=4") || strings.Contains(logs[1], "retries=5") {
 						moreRetries = true
 					}
 					So(moreRetries, ShouldBeTrue)
