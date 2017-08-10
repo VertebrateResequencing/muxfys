@@ -28,7 +28,6 @@ import (
 	"github.com/inconshreveable/log15"
 	"io"
 	"os"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -229,7 +228,6 @@ func (f *remoteFile) Flush() fuse.Status {
 		}
 		f.wpipe = nil
 		f.rpipe = nil
-		debug.FreeOSMemory() // otherwise a subsequent Unmount may fail because fork/exec can't allocate memory
 	}
 
 	return fuse.OK
