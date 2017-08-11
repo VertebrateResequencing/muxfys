@@ -92,17 +92,30 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 			// requests, so we handle the typical case of the current expected
 			// offset being skipped for the next offset, then coming back to the
 			// expected one
-			if offset > f.readOffset && (offset-f.readOffset) < int64((len(buf)*3)) {
+			if offset > f.readOffset && (offset-f.readOffset) < int64((len(buf)*6)) {
 				// read from reader until we get to the correct position,
 				// storing what we skipped
 				skippedPos := f.readOffset
 				skipSize := offset - f.readOffset
 				skipped := make([]byte, skipSize, skipSize)
-				status := f.fillBuffer(skipped, offset)
+				status := f.fillBuffer(skipped, f.readOffset)
 				if status != fuse.OK {
 					return nil, status
 				}
-				f.skips[skippedPos] = skipped
+				lb := int64(len(buf))
+				if skipSize <= lb {
+					f.skips[skippedPos] = skipped
+				} else {
+					var o int64
+					for p := skippedPos; p < offset; p += lb {
+						if o+lb > skipSize {
+							f.skips[p] = skipped[o:]
+							break
+						}
+						f.skips[p] = skipped[o : o+lb]
+						o += lb
+					}
+				}
 			} else if skipped, existed := f.skips[offset]; existed && len(buf) == len(skipped) {
 				// service the request from the bytes we previously skipped
 				copy(buf, skipped)

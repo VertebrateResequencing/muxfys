@@ -2265,6 +2265,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		}
 	})
 
+	var bigFileGetTimeUncached time.Duration
 	Convey("You can mount without local file caching", t, func() {
 		remoteConfig.CacheData = false
 		fs, err := New(cfg)
@@ -2437,11 +2438,41 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			path := mountPoint + "/big.file"
 			start := time.Now()
 			read, err := streamFile(path, 0)
-			thisGetTime := time.Since(start)
+			bigFileGetTimeUncached = time.Since(start)
 			// fmt.Printf("\n1G file read took %s cached vs %s uncached\n", bigFileGetTime, thisGetTime)
 			So(err, ShouldBeNil)
 			So(read, ShouldEqual, bigFileSize)
-			So(math.Ceil(thisGetTime.Seconds()), ShouldBeLessThanOrEqualTo, math.Ceil(bigFileGetTime.Seconds())+2) // if it isn't, it's almost certainly a bug!
+			So(math.Ceil(bigFileGetTimeUncached.Seconds()), ShouldBeLessThanOrEqualTo, math.Ceil(bigFileGetTime.Seconds())+2) // if it isn't, it's almost certainly a bug!
+		})
+
+		Convey("You can read a very big file using cat", func() {
+			ioutil.ReadDir(mountPoint)
+			path := mountPoint + "/big.file"
+			start := time.Now()
+			err := exec.Command("cat", path).Run()
+			So(err, ShouldBeNil)
+			thisGetTime := time.Since(start)
+			// fmt.Printf("\n1G file cat took %s \n", thisGetTime)
+			So(err, ShouldBeNil)
+
+			// it should be about as quick as the above streamFile call: much
+			// slower means a bug
+			So(math.Ceil(thisGetTime.Seconds()), ShouldBeLessThanOrEqualTo, math.Ceil(bigFileGetTimeUncached.Seconds())+2)
+		})
+
+		Convey("You can read a very big file using cp", func() {
+			ioutil.ReadDir(mountPoint)
+			path := mountPoint + "/big.file"
+			start := time.Now()
+			err := exec.Command("cp", path, "/dev/null").Run()
+			So(err, ShouldBeNil)
+			thisGetTime := time.Since(start)
+			// fmt.Printf("\n1G file cp took %s \n", thisGetTime)
+			So(err, ShouldBeNil)
+
+			// it should be about as quick as the above streamFile call: much
+			// slower means a bug
+			So(math.Ceil(thisGetTime.Seconds()), ShouldBeLessThanOrEqualTo, math.Ceil(bigFileGetTimeUncached.Seconds())+2)
 		})
 
 		Convey("Trying to read a non-existent file fails as expected", func() {
