@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [2.0.3] - 2017-08-11
+### Changed
+- Remote reads that work but then stop working due to "connection reset by
+  peer" now result in retries for 10mins instead of a failing instantly.
+
+### Fixed
+- Slow reads with unix tools like cat or cp.
+
+
 ## [2.0.2] - 2017-08-01
 ### Changed
 - Remote servers that work but then stop working due to "connection reset by
