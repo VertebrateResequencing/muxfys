@@ -28,7 +28,7 @@ import (
 	"github.com/inconshreveable/log15"
 	"io"
 	"os"
-	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 )
@@ -42,6 +42,7 @@ type remoteFile struct {
 	mutex         sync.Mutex
 	attr          *fuse.Attr
 	readOffset    int64
+	readWorked    bool
 	reader        io.ReadCloser
 	rpipe         *io.PipeReader
 	wpipe         *io.PipeWriter
@@ -91,17 +92,30 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 			// requests, so we handle the typical case of the current expected
 			// offset being skipped for the next offset, then coming back to the
 			// expected one
-			if offset > f.readOffset && (offset-f.readOffset) < int64((len(buf)*3)) {
+			if offset > f.readOffset && (offset-f.readOffset) < int64((len(buf)*6)) {
 				// read from reader until we get to the correct position,
 				// storing what we skipped
 				skippedPos := f.readOffset
 				skipSize := offset - f.readOffset
 				skipped := make([]byte, skipSize, skipSize)
-				status := f.fillBuffer(skipped)
+				status := f.fillBuffer(skipped, f.readOffset)
 				if status != fuse.OK {
 					return nil, status
 				}
-				f.skips[skippedPos] = skipped
+				lb := int64(len(buf))
+				if skipSize <= lb {
+					f.skips[skippedPos] = skipped
+				} else {
+					var o int64
+					for p := skippedPos; p < offset; p += lb {
+						if o+lb > skipSize {
+							f.skips[p] = skipped[o:]
+							break
+						}
+						f.skips[p] = skipped[o : o+lb]
+						o += lb
+					}
+				}
 			} else if skipped, existed := f.skips[offset]; existed && len(buf) == len(skipped) {
 				// service the request from the bytes we previously skipped
 				copy(buf, skipped)
@@ -122,7 +136,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 	// if opened previously, read from existing reader and return
 	if f.reader != nil {
-		status := f.fillBuffer(buf)
+		status := f.fillBuffer(buf, offset)
 		return fuse.ReadResultData(buf), status
 	}
 
@@ -136,7 +150,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 	// store the reader to read from later
 	f.reader = object
 
-	status = f.fillBuffer(buf)
+	status = f.fillBuffer(buf, offset)
 	if status != fuse.OK {
 		return fuse.ReadResultData([]byte{}), status
 	}
@@ -144,19 +158,31 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 }
 
 // fillBuffer reads from our remote reader to the Read() buffer.
-func (f *remoteFile) fillBuffer(buf []byte) (status fuse.Status) {
+func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 	bytesRead, err := io.ReadFull(f.reader, buf)
 	if err != nil {
 		f.reader.Close()
 		f.reader = nil
-		f.readOffset = 0
 		if err == io.ErrUnexpectedEOF || err == io.EOF {
 			status = fuse.OK
 		} else {
+			if f.readWorked && strings.Contains(err.Error(), "reset by peer") {
+				// if connection reset by peer and a read previously worked
+				// we try getting a new object before trying again, to cope with
+				// temporary networking issues
+				object, goStatus := f.r.getObject(f.path, offset)
+				if goStatus == fuse.OK {
+					f.reader = object
+					f.readWorked = false
+					return f.fillBuffer(buf, offset)
+				}
+			}
 			status = f.r.statusFromErr("Read("+f.path+")", err)
 		}
+		f.readOffset = 0
 		return
 	}
+	f.readWorked = true
 	f.readOffset += int64(bytesRead)
 	return fuse.OK
 }
@@ -215,7 +241,6 @@ func (f *remoteFile) Flush() fuse.Status {
 		}
 		f.wpipe = nil
 		f.rpipe = nil
-		debug.FreeOSMemory() // otherwise a subsequent Unmount may fail because fork/exec can't allocate memory
 	}
 
 	return fuse.OK
