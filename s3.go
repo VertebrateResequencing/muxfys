@@ -278,16 +278,14 @@ func (a *S3Accessor) DownloadFile(source, dest string) error {
 
 // UploadFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) UploadFile(source, dest, contentType string) error {
-	_, err := a.client.FPutObject(a.bucket, dest, source, contentType)
+	_, err := a.client.FPutObject(a.bucket, dest, source, &minio.PutObjectOptions{ContentType: contentType})
 	return err
 }
 
 // UploadData implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) UploadData(data io.Reader, dest string) error {
-	//*** PutObjectStreaming has a fixed large read size which kills memory;
-	// try and do our own buffered read to initially get the mime type and then
-	// use a different minio method...
-	_, err := a.client.PutObjectStreaming(a.bucket, dest, data)
+	//*** try and do our own buffered read to initially get the mime type?
+	_, err := a.client.PutObject(a.bucket, dest, data, -1, &minio.PutObjectOptions{})
 	return err
 }
 
