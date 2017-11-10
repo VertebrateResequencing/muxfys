@@ -273,19 +273,19 @@ func NewS3Accessor(config *S3Config) (a *S3Accessor, err error) {
 
 // DownloadFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) DownloadFile(source, dest string) error {
-	return a.client.FGetObject(a.bucket, source, dest)
+	return a.client.FGetObject(a.bucket, source, dest, minio.GetObjectOptions{})
 }
 
 // UploadFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) UploadFile(source, dest, contentType string) error {
-	_, err := a.client.FPutObject(a.bucket, dest, source, &minio.PutObjectOptions{ContentType: contentType})
+	_, err := a.client.FPutObject(a.bucket, dest, source, minio.PutObjectOptions{ContentType: contentType})
 	return err
 }
 
 // UploadData implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) UploadData(data io.Reader, dest string) error {
 	//*** try and do our own buffered read to initially get the mime type?
-	_, err := a.client.PutObject(a.bucket, dest, data, -1, &minio.PutObjectOptions{})
+	_, err := a.client.PutObject(a.bucket, dest, data, -1, minio.PutObjectOptions{})
 	return err
 }
 
@@ -312,7 +312,7 @@ func (a *S3Accessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
 
 // OpenFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) OpenFile(path string) (io.ReadCloser, error) {
-	return a.client.GetObject(a.bucket, path)
+	return a.client.GetObject(a.bucket, path, minio.GetObjectOptions{})
 }
 
 // Seek implements RemoteAccessor by deferring to minio.
