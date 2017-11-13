@@ -27,10 +27,10 @@ package muxfys
 
 import (
 	"bufio"
+	"github.com/alexflint/go-filemutex"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
-	"github.com/sb10/go-filemutex"
 	"io"
 	"os"
 	"path/filepath"
@@ -359,6 +359,8 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 			reader, err := os.Open(path)
 			if err != nil {
 				r.Error("Could not open cached file", "path", path, "err", err)
+				fmutex.Lock()
+				fmutex.Close()
 				return nil, fuse.EIO
 			}
 			for _, uiv := range unread {
@@ -379,6 +381,8 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 				if err != nil {
 					r.Error("Could not read file", "path", name, "err", err)
 					reader.Close()
+					fmutex.Lock()
+					fmutex.Close()
 					return nil, fuse.EIO
 				}
 			}
@@ -785,7 +789,7 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 				return fuse.EIO
 			}
 			fmutex2.Lock()
-			defer fmutex2.Unlock()
+			defer fmutex2.Close()
 
 			// if we've cached oldPath, move to new cached file
 			os.Rename(localPathOld, localPathNew)
@@ -978,7 +982,7 @@ func (fs *MuxFys) rmEntryFromItsDir(name string) {
 
 // getFileMutex prepares a lock file for the given local path (in that path's
 // directory, creating the directory first if necessary), and returns a mutex
-// that you should Lock() and Unlock().
+// that you should Lock() and Close().
 func (fs *MuxFys) getFileMutex(localPath string) (mutex *filemutex.FileMutex, err error) {
 	parent := filepath.Dir(localPath)
 	if _, serr := os.Stat(parent); serr != nil && os.IsNotExist(serr) {
