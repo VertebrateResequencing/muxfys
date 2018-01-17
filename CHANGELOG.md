@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [2.0.6] - 2018-01-17
+## Fixed
+- When using a shared cache directory, files cached by a prior process are now
+  actually used, instead of reading from remote again.
+
+
 ## [2.0.5] - 2017-11-13
 ## Fixed
 - Compiles against latest minio-go.
