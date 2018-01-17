@@ -246,6 +246,9 @@ func TestMuxFys(t *testing.T) {
 	cacheBase := filepath.Join(tmpdir, "cacheBase")
 	os.MkdirAll(cacheBase, os.FileMode(0777))
 
+	cachePermanent := filepath.Join(tmpdir, "cachePermanent")
+	os.MkdirAll(cachePermanent, os.FileMode(0777))
+
 	sourcePoint := filepath.Join(tmpdir, "source")
 	os.MkdirAll(sourcePoint, os.FileMode(0777))
 	err = ioutil.WriteFile(filepath.Join(sourcePoint, "read.file"), []byte("test1\ntest2\n"), 0644)
@@ -786,6 +789,47 @@ func TestMuxFys(t *testing.T) {
 				<-time.After(50 * time.Millisecond)
 				_, err = os.Stat(sourceFile1)
 				So(err, ShouldBeNil)
+			})
+		})
+
+		Convey("You can Mount() read-only with a permanent cache", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor: accessor,
+				CacheDir: cachePermanent,
+				Write:    false,
+			}
+			err := fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+			defer fs.Unmount()
+
+			Convey("You can Unmount()", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+				So(checkEmpty(cachePermanent), ShouldBeTrue)
+			})
+
+			Convey("Unmount() after reading files does not delete the cached files", func() {
+				data, err := ioutil.ReadFile(filepath.Join(explicitMount, "read.file"))
+				So(err, ShouldBeNil)
+				So(string(data), ShouldEqual, "test1\ntest2\n")
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
+				So(checkEmpty(cachePermanent), ShouldBeFalse)
+
+				Convey("Remounting and re-reading reads from the cached file", func() {
+					// hack the cached file so we know we read from it and not
+					// source; currently cache files are only validated based on
+					// size
+					cf := filepath.Join(cachePermanent, sourcePoint, "read.file")
+					err = ioutil.WriteFile(cf, []byte("test1\ntestX\n"), 0644)
+
+					err := fs.Mount(remoteConfig)
+					So(err, ShouldBeNil)
+					data, err := ioutil.ReadFile(filepath.Join(explicitMount, "read.file"))
+					So(err, ShouldBeNil)
+					So(string(data), ShouldEqual, "test1\ntestX\n")
+				})
 			})
 		})
 

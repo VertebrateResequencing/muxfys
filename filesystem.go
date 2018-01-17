@@ -302,6 +302,19 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 			if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {
 				attr.Size = uint64(0)
 			}
+		} else if !r.cacheIsTmp {
+			// if the file already exists at the correct size, but we have no
+			// record of it being cached, assume another process sharing the
+			// same permanent cache folder already cached the whole file
+			iv := NewInterval(0, localStats.Size())
+			ivs := r.Uncached(localPath, iv)
+			if len(ivs) > 0 {
+				r.Cached(localPath, iv)
+			}
+
+			// *** doesn't this break if two different mount processes are
+			// trying to read the same file at the same time?... Maybe we'll
+			// need to store cached intervals in the lock file after all...
 		}
 	}
 
