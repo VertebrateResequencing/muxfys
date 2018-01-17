@@ -823,8 +823,9 @@ func TestMuxFys(t *testing.T) {
 					// size
 					cf := filepath.Join(cachePermanent, sourcePoint, "read.file")
 					err = ioutil.WriteFile(cf, []byte("test1\ntestX\n"), 0644)
+					So(err, ShouldBeNil)
 
-					err := fs.Mount(remoteConfig)
+					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 					data, err := ioutil.ReadFile(filepath.Join(explicitMount, "read.file"))
 					So(err, ShouldBeNil)
