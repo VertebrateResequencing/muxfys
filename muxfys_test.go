@@ -20,8 +20,6 @@ package muxfys
 
 import (
 	"fmt"
-	"github.com/inconshreveable/log15"
-	. "github.com/smartystreets/goconvey/convey"
 	"io"
 	"io/ioutil"
 	"log"
@@ -33,6 +31,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/inconshreveable/log15"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 var uploadFail bool
@@ -293,7 +294,7 @@ func TestMuxFys(t *testing.T) {
 		defer efm.Unlock()
 		i = code
 	}
-	deathSignals = []os.Signal{syscall.SIGUNUSED}
+	deathSignals = []os.Signal{syscall.SIGUSR1}
 
 	Convey("You can make a New MuxFys with an explicit Mount", t, func() {
 		explicitMount := filepath.Join(tmpdir, "explicitMount")
@@ -337,7 +338,7 @@ func TestMuxFys(t *testing.T) {
 				// doing it again is harmless
 				fs.UnmountOnDeath()
 
-				syscall.Kill(syscall.Getpid(), syscall.SIGUNUSED)
+				syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
 				<-time.After(500 * time.Millisecond)
 
 				fs.mutex.Lock()
@@ -358,7 +359,7 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(fs.mounted, ShouldBeFalse)
 
-				syscall.Kill(syscall.Getpid(), syscall.SIGUNUSED)
+				syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
 				<-time.After(500 * time.Millisecond)
 
 				So(i, ShouldEqual, 0)
@@ -586,7 +587,7 @@ func TestMuxFys(t *testing.T) {
 				f, err := os.OpenFile(filepath.Join(explicitMount, "opened.file"), os.O_RDWR|os.O_CREATE, 0666)
 				So(err, ShouldBeNil)
 
-				syscall.Kill(syscall.Getpid(), syscall.SIGUNUSED)
+				syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
 				<-time.After(500 * time.Millisecond)
 
 				So(fs.mounted, ShouldBeTrue)
