@@ -1,18 +1,14 @@
 # make -f buildscripts/lint.makefile
 
-PKG := github.com/VertebrateResequencing/muxfys
-PKG_LIST := $(shell go list ${PKG}/... | grep -v /vendor/)
-GO_FILES := $(shell find . -name '*.go' | grep -v /vendor/)
-
 default: lint
 
 test: export CGO_ENABLED = 0
 test:
-	@go test -p 1 -tags netgo ${PKG_LIST}
+	@go test -p 1 -tags netgo ./...
 
 race: export CGO_ENABLED = 1
 race:
-	@go test -p 1 -tags netgo -race ${PKG_LIST}
+	@go test -p 1 -tags netgo -v -race ./...
 
 # go get -u gopkg.in/alecthomas/gometalinter.v2
 # gometalinter.v2 --install
