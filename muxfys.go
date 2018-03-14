@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 //
 //  This file is part of muxfys.
@@ -121,12 +121,7 @@ package muxfys
 
 import (
 	"fmt"
-	"github.com/hanwen/go-fuse/fuse"
-	"github.com/hanwen/go-fuse/fuse/nodefs"
-	"github.com/hanwen/go-fuse/fuse/pathfs"
-	"github.com/inconshreveable/log15"
-	"github.com/mitchellh/go-homedir"
-	"github.com/sb10/l15h"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -137,6 +132,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/fuse/nodefs"
+	"github.com/hanwen/go-fuse/fuse/pathfs"
+	"github.com/inconshreveable/log15"
+	"github.com/mitchellh/go-homedir"
+	"github.com/sb10/l15h"
 )
 
 const (
@@ -211,30 +213,30 @@ type MuxFys struct {
 // object stores, ensure you un-mount if killed by calling UnmountOnDeath(),
 // then Unmount() when you're done. You might check Logs() afterwards. The other
 // methods of MuxFys can be ignored in most cases.
-func New(config *Config) (fs *MuxFys, err error) {
+func New(config *Config) (*MuxFys, error) {
 	mountPoint := config.Mount
 	if mountPoint == "" {
 		mountPoint = "mnt"
 	}
-	mountPoint, err = homedir.Expand(mountPoint)
+	mountPoint, err := homedir.Expand(mountPoint)
 	if err != nil {
-		return
+		return nil, err
 	}
 	mountPoint, err = filepath.Abs(mountPoint)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	// create mount point if necessary
 	err = os.MkdirAll(mountPoint, os.FileMode(dirMode))
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	// check that it's empty
 	entries, err := ioutil.ReadDir(mountPoint)
 	if err != nil {
-		return
+		return nil, err
 	}
 	if len(entries) > 0 {
 		return nil, fmt.Errorf("Mount directory %s was not empty", mountPoint)
@@ -244,7 +246,7 @@ func New(config *Config) (fs *MuxFys, err error) {
 	if cacheBase == "" {
 		cacheBase, err = os.Getwd()
 		if err != nil {
-			return
+			return nil, err
 		}
 	}
 
@@ -260,7 +262,7 @@ func New(config *Config) (fs *MuxFys, err error) {
 	l15h.AddHandler(logger, log15.LvlFilterHandler(logLevel, l15h.CallerInfoHandler(l15h.StoreHandler(store, log15.LogfmtFormat()))))
 
 	// initialize ourselves
-	fs = &MuxFys{
+	fs := &MuxFys{
 		FileSystem:   pathfs.NewDefaultFileSystem(),
 		mountPoint:   mountPoint,
 		cacheBase:    cacheBase,
@@ -285,7 +287,7 @@ func New(config *Config) (fs *MuxFys, err error) {
 		Ctime: mTime,
 	}
 
-	return
+	return fs, err
 }
 
 // Mount carries out the mounting of your supplied RemoteConfigs to your
@@ -300,25 +302,22 @@ func New(config *Config) (fs *MuxFys, err error) {
 // contents will in in turn show the contents of all those directories. If
 // multiple remotes have a file with the same name in the same directory, reads
 // will come from the first remote you configured that has that file.
-func (fs *MuxFys) Mount(rcs ...*RemoteConfig) (err error) {
+func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 	if len(rcs) == 0 {
-		err = fmt.Errorf("At least one RemoteConfig must be supplied")
-		return
+		return fmt.Errorf("At least one RemoteConfig must be supplied")
 	}
 
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 	if fs.mounted {
-		err = fmt.Errorf("Can't mount more that once at a time")
-		return
+		return fmt.Errorf("Can't mount more that once at a time")
 	}
 
 	// create a remote for every RemoteConfig
 	for _, c := range rcs {
-		var r *remote
-		r, err = newRemote(c.Accessor, c.CacheData, c.CacheDir, fs.cacheBase, c.Write, fs.maxAttempts, fs.Logger)
+		r, err := newRemote(c.Accessor, c.CacheData, c.CacheDir, fs.cacheBase, c.Write, fs.maxAttempts, fs.Logger)
 		if err != nil {
-			return
+			return err
 		}
 
 		fs.remotes = append(fs.remotes, r)
@@ -332,7 +331,7 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) (err error) {
 
 	uid, gid, err := userAndGroup()
 	if err != nil {
-		return
+		return err
 	}
 
 	opts := &nodefs.Options{
@@ -359,17 +358,17 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) (err error) {
 	}
 	fs.server, err = fuse.NewServer(conn.RawFS(), fs.mountPoint, mOpts)
 	if err != nil {
-		return
+		return err
 	}
 
 	go fs.server.Serve()
 	err = fs.server.WaitMount()
 	if err != nil {
-		return
+		return err
 	}
 
 	fs.mounted = true
-	return
+	return err
 }
 
 // userAndGroup returns the current uid and gid; we only ever mount with dir and
@@ -377,23 +376,20 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) (err error) {
 func userAndGroup() (uid uint32, gid uint32, err error) {
 	user, err := user.Current()
 	if err != nil {
-		return
+		return uid, gid, err
 	}
 
 	uid64, err := strconv.ParseInt(user.Uid, 10, 32)
 	if err != nil {
-		return
+		return uid, gid, err
 	}
 
 	gid64, err := strconv.ParseInt(user.Gid, 10, 32)
 	if err != nil {
-		return
+		return uid, gid, err
 	}
 
-	uid = uint32(uid64)
-	gid = uint32(gid64)
-
-	return
+	return uint32(uid64), uint32(gid64), err
 }
 
 // UnmountOnDeath captures SIGINT (ctrl-c) and SIGTERM (kill) signals, then
@@ -448,7 +444,7 @@ func (fs *MuxFys) UnmountOnDeath() {
 //
 // If a remote was not configured with a specific CacheDir but CacheData was
 // true, the CacheDir will be deleted.
-func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
+func (fs *MuxFys) Unmount(doNotUpload ...bool) error {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 
@@ -456,6 +452,7 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 		fs.ignoreSignals <- true
 	}
 
+	var err error
 	if fs.mounted {
 		err = fs.server.Unmount()
 		if err == nil {
@@ -464,7 +461,7 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 		// <-time.After(10 * time.Second)
 	}
 
-	if !(len(doNotUpload) > 0 && doNotUpload[0]) {
+	if !(len(doNotUpload) == 1 && doNotUpload[0]) {
 		// upload files that got opened for writing
 		uerr := fs.uploadCreated()
 		if uerr != nil {
@@ -479,11 +476,14 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 	// delete any cachedirs we created
 	for _, remote := range fs.remotes {
 		if remote.cacheIsTmp {
-			remote.deleteCache()
-			// *** this can fail on nfs due to "device or resource busy", but
-			// retrying doesn't help. Waiting 10s immediately before or after
-			// a failure also doesn't help; you have to always wait 10s after
-			// fs.server.Unmount() to be able to delete the cache!
+			errd := remote.deleteCache()
+			if errd != nil {
+				remote.Warn("Unmount cache deletion failed", "err", errd)
+				// *** this can fail on nfs due to "device or resource busy",
+				// but retrying doesn't help. Waiting 10s immediately before or
+				// after a failure also doesn't help; you have to always wait
+				// 10s after fs.server.Unmount() to be able to delete the cache!
+			}
 		}
 	}
 
@@ -502,7 +502,7 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) (err error) {
 	fs.remotes = nil
 	fs.writeRemote = nil
 
-	return
+	return err
 }
 
 // uploadCreated uploads any files that previously got created. Only functions
@@ -569,4 +569,15 @@ func (fs *MuxFys) Logs() []string {
 // log15.StderrHandler would log everything to STDERR.
 func SetLogHandler(h log15.Handler) {
 	logHandlerSetter.SetHandler(h)
+}
+
+// logClose is for use to Close() an object during a defer when you don't care
+// if the Close() returns an error, but do want non-EOF errors logged. Extra
+// args are passed as additional context for the logger.
+func logClose(logger log15.Logger, obj io.Closer, msg string, extra ...interface{}) {
+	err := obj.Close()
+	if err != nil && err.Error() != "EOF" {
+		extra = append(extra, "err", err)
+		logger.Warn("failed to close "+msg, extra...)
+	}
 }

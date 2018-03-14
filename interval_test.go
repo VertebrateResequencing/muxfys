@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 //
 //  This file is part of muxfys.
@@ -19,11 +19,12 @@
 package muxfys
 
 import (
-	. "github.com/smartystreets/goconvey/convey"
 	"math"
 	"math/rand"
 	"testing"
 	"time"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestIntervals(t *testing.T) {

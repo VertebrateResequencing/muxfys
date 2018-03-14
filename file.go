@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 // Some of the read code in this file is inspired by the work of Ka-Hing Cheung
 // in https://github.com/kahing/goofys
@@ -23,14 +23,15 @@ package muxfys
 // This file implements pathfs.File methods for remote and cached files.
 
 import (
-	"github.com/hanwen/go-fuse/fuse"
-	"github.com/hanwen/go-fuse/fuse/nodefs"
-	"github.com/inconshreveable/log15"
 	"io"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/fuse/nodefs"
+	"github.com/inconshreveable/log15"
 )
 
 // remoteFile struct is muxfys' implementation of pathfs.File for reading data
@@ -49,17 +50,19 @@ type remoteFile struct {
 	writeOffset   int64
 	writeComplete chan bool
 	skips         map[int64][]byte
+	log15.Logger
 }
 
 // newRemoteFile creates a new RemoteFile. For all the methods not yet
 // implemented, fuse will get a not yet implemented error.
-func newRemoteFile(r *remote, path string, attr *fuse.Attr, create bool) nodefs.File {
+func newRemoteFile(r *remote, path string, attr *fuse.Attr, create bool, logger log15.Logger) nodefs.File {
 	f := &remoteFile{
-		File:  nodefs.NewDefaultFile(),
-		r:     r,
-		path:  path,
-		attr:  attr,
-		skips: make(map[int64][]byte),
+		File:   nodefs.NewDefaultFile(),
+		r:      r,
+		path:   path,
+		attr:   attr,
+		skips:  make(map[int64][]byte),
+		Logger: logger.New("path", path),
 	}
 
 	if create {
@@ -97,7 +100,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 				// storing what we skipped
 				skippedPos := f.readOffset
 				skipSize := offset - f.readOffset
-				skipped := make([]byte, skipSize, skipSize)
+				skipped := make([]byte, skipSize)
 				status := f.fillBuffer(skipped, f.readOffset)
 				if status != fuse.OK {
 					return nil, status
@@ -161,21 +164,27 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 	bytesRead, err := io.ReadFull(f.reader, buf)
 	if err != nil {
-		f.reader.Close()
+		errc := f.reader.Close()
+		if errc != nil {
+			f.Warn("fillBuffer reader close failed", "err", errc)
+		}
 		f.reader = nil
 		if err == io.ErrUnexpectedEOF || err == io.EOF {
 			status = fuse.OK
 		} else {
+			f.Warn("fillBuffer read failed", "err", err)
 			if f.readWorked && strings.Contains(err.Error(), "reset by peer") {
 				// if connection reset by peer and a read previously worked
 				// we try getting a new object before trying again, to cope with
 				// temporary networking issues
 				object, goStatus := f.r.getObject(f.path, offset)
 				if goStatus == fuse.OK {
+					f.Info("fillBuffer retry got the object")
 					f.reader = object
 					f.readWorked = false
 					return f.fillBuffer(buf, offset)
 				}
+				f.Warn("fillBuffer retry failed to get the object")
 			}
 			status = f.r.statusFromErr("Read("+f.path+")", err)
 		}
@@ -200,12 +209,14 @@ func (f *remoteFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
 
 	if offset != f.writeOffset {
 		// we can't handle non-serial writes
+		f.Warn("Write can't handle non-serial writes")
 		return uint32(0), fuse.EIO
 	}
 
 	if f.wpipe == nil {
 		// shouldn't happen: trying to write after close (Flush()), or without
 		// making the remoteFile with create true.
+		f.Warn("Write when wipipe nil")
 		return uint32(0), fuse.EIO
 	}
 
@@ -228,16 +239,25 @@ func (f *remoteFile) Flush() fuse.Status {
 	defer f.mutex.Unlock()
 
 	if f.readOffset > 0 && f.reader != nil {
-		f.reader.Close()
+		errc := f.reader.Close()
+		if errc != nil {
+			f.Warn("Flush reader close failed", "err", errc)
+		}
 		f.reader = nil
 	}
 
 	if f.writeOffset > 0 && f.wpipe != nil {
-		f.wpipe.Close()
+		errc := f.wpipe.Close()
+		if errc != nil {
+			f.Warn("Flush wpipe close failed", "err", errc)
+		}
 		f.writeOffset = 0
 		worked := <-f.writeComplete
 		if worked {
-			f.rpipe.Close()
+			errc = f.rpipe.Close()
+			if errc != nil {
+				f.Warn("Flush rpipe close failed", "err", errc)
+			}
 		}
 		f.wpipe = nil
 		f.rpipe = nil
@@ -304,7 +324,7 @@ func newCachedFile(r *remote, remotePath, localPath string, attr *fuse.Attr, fla
 		Logger:     logger.New("rpath", remotePath, "lpath", localPath),
 	}
 	f.makeLoopback()
-	f.remoteFile = newRemoteFile(r, remotePath, attr, false).(*remoteFile)
+	f.remoteFile = newRemoteFile(r, remotePath, attr, false, logger).(*remoteFile)
 	return f
 }
 
@@ -379,7 +399,7 @@ func (f *cachedFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 	// read remote data and store in cache file for the previously unread parts
 	for _, iv := range newIvs {
-		ivBuf := make([]byte, iv.Length(), iv.Length())
+		ivBuf := make([]byte, iv.Length())
 		_, status := f.remoteFile.Read(ivBuf, iv.Start)
 		if status != fuse.OK {
 			// we warn instead of error because this is a "normal" situation

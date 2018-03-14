@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 //
 //  This file is part of muxfys.
@@ -22,8 +22,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/hanwen/go-fuse/fuse"
-	. "github.com/smartystreets/goconvey/convey"
 	"io"
 	"io/ioutil"
 	"log"
@@ -33,12 +31,16 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hanwen/go-fuse/fuse"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestS3Localntegration(t *testing.T) {
@@ -236,9 +238,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		AccessKey: accessKey,
 		SecretKey: secretKey,
 	}
-	accessor, err := NewS3Accessor(manualConfig)
-	if err != nil {
-		log.Panic(err)
+	accessor, errn := NewS3Accessor(manualConfig)
+	if errn != nil {
+		log.Panic(errn)
 	}
 
 	remoteConfig := &RemoteConfig{
@@ -288,15 +290,15 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 	var bigFileGetTime time.Duration
 	Convey("You can mount with local file caching", t, func() {
-		fs, err := New(cfg)
-		So(err, ShouldBeNil)
+		fs, errc := New(cfg)
+		So(errc, ShouldBeNil)
 
-		err = fs.Mount(remoteConfig)
-		So(err, ShouldBeNil)
+		errm := fs.Mount(remoteConfig)
+		So(errm, ShouldBeNil)
 
 		defer func() {
-			err = fs.Unmount()
-			So(err, ShouldBeNil)
+			erru := fs.Unmount()
+			So(erru, ShouldBeNil)
 		}()
 
 		Convey("You can read a whole file as well as parts of it by seeking", func() {
@@ -328,14 +330,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			r.Seek(36, io.SeekStart)
 
-			b := make([]byte, 10, 10)
+			b := make([]byte, 10)
 			done, err := io.ReadFull(r, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 10)
 			So(b, ShouldResemble, []byte("1234567890"))
 
 			r.Seek(10, io.SeekStart)
-			b = make([]byte, 10, 10)
+			b = make([]byte, 10)
 			done, err = io.ReadFull(r, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 10)
@@ -348,14 +350,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			defer rbig.Close()
 
 			rbig.Seek(350000, io.SeekStart)
-			b = make([]byte, 6, 6)
+			b = make([]byte, 6)
 			done, err = io.ReadFull(rbig, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 6)
 			So(b, ShouldResemble, []byte("050001"))
 
 			rbig.Seek(175000, io.SeekStart)
-			b = make([]byte, 6, 6)
+			b = make([]byte, 6)
 			done, err = io.ReadFull(rbig, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 6)
@@ -378,7 +380,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			So(err, ShouldBeNil)
 
 			rbig.Seek(int64(bigFileSize/2), io.SeekStart)
-			b := make([]byte, 6, 6)
+			b := make([]byte, 6)
 			done, err := io.ReadFull(rbig, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 6)
@@ -419,16 +421,16 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			// first get a reference for how long it takes to read the whole
 			// thing
-			t := time.Now()
-			read, err := streamFile(path, 0)
-			wt := time.Since(t)
-			So(err, ShouldBeNil)
+			t2 := time.Now()
+			read, errs := streamFile(path, 0)
+			wt := time.Since(t2)
+			So(errs, ShouldBeNil)
 			So(read, ShouldEqual, 700000)
 
 			// sanity check that re-reading uses our cache
-			t = time.Now()
+			t2 = time.Now()
 			streamFile(path, 0)
-			st := time.Since(t)
+			st := time.Since(t2)
 
 			// should have completed in under 90% of the time (since minio is
 			// local, the difference in reading from cache vs from minio is just
@@ -438,10 +440,10 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			So(st, ShouldBeLessThan, et)
 
 			// remount to clear the cache
-			err = fs.Unmount()
-			So(err, ShouldBeNil)
-			err = fs.Mount(remoteConfig)
-			So(err, ShouldBeNil)
+			erru := fs.Unmount()
+			So(erru, ShouldBeNil)
+			errm := fs.Mount(remoteConfig)
+			So(errm, ShouldBeNil)
 			streamFile(init, 0)
 
 			// now read the whole file and half the file at the ~same time
@@ -462,7 +464,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				errors <- nil
 			}
 
-			t = time.Now()
+			t2 = time.Now()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
@@ -474,7 +476,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				streamer(0, 700000)
 			}()
 			wg.Wait()
-			ot := time.Since(t)
+			ot := time.Since(t2)
 
 			// both should complete in not much more time than the slowest,
 			// and that shouldn't be much slower than when reading alone
@@ -589,7 +591,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 		Convey("You can't delete files either", func() {
 			path := mountPoint + "/big.file"
-			err = os.Remove(path)
+			err := os.Remove(path)
 			So(err, ShouldNotBeNil)
 			perr, ok := err.(*os.PathError)
 			So(ok, ShouldBeTrue)
@@ -600,21 +602,21 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			path := mountPoint + "/big.file"
 			dest := mountPoint + "/1G.moved"
 			cmd := exec.Command("mv", path, dest)
-			err = cmd.Run()
+			err := cmd.Run()
 			So(err, ShouldNotBeNil)
 		})
 
 		Convey("You can't touch files in non Write mode", func() {
 			path := mountPoint + "/big.file"
 			cmd := exec.Command("touch", path)
-			err = cmd.Run()
+			err := cmd.Run()
 			So(err, ShouldNotBeNil)
 		})
 
 		Convey("You can't make, delete or rename directories in non Write mode", func() {
 			newDir := mountPoint + "/newdir_test"
 			cmd := exec.Command("mkdir", newDir)
-			err = cmd.Run()
+			err := cmd.Run()
 			So(err, ShouldNotBeNil)
 
 			path := mountPoint + "/sub"
@@ -630,7 +632,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		Convey("Unmounting after reading a file deletes the cache dir", func() {
 			streamFile(mountPoint+"/numalphanum.txt", 0)
 			thisCacheDir := fs.remotes[0].cacheDir
-			_, err = os.Stat(thisCacheDir)
+			_, err := os.Stat(thisCacheDir)
 			So(err, ShouldBeNil)
 			err = fs.Unmount()
 			So(err, ShouldBeNil)
@@ -642,77 +644,77 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 	Convey("You can mount with local file caching in write mode", t, func() {
 		remoteConfig.Write = true
-		fs, err := New(cfg)
-		So(err, ShouldBeNil)
+		fs, errc := New(cfg)
+		So(errc, ShouldBeNil)
 
-		err = fs.Mount(remoteConfig)
-		So(err, ShouldBeNil)
+		errm := fs.Mount(remoteConfig)
+		So(errm, ShouldBeNil)
 
 		defer func() {
-			err = fs.Unmount()
+			erru := fs.Unmount()
 			remoteConfig.Write = false
-			So(err, ShouldBeNil)
+			So(erru, ShouldBeNil)
 		}()
 
 		Convey("Trying to write in write mode works", func() {
 			path := mountPoint + "/write.test"
 			b := []byte("write test\n")
-			err := ioutil.WriteFile(path, b, 0644)
-			So(err, ShouldBeNil)
+			errf := ioutil.WriteFile(path, b, 0644)
+			So(errf, ShouldBeNil)
 
 			// you can immediately read it back
-			bytes, err := ioutil.ReadFile(path)
-			So(err, ShouldBeNil)
+			bytes, errf := ioutil.ReadFile(path)
+			So(errf, ShouldBeNil)
 			So(bytes, ShouldResemble, b)
 
 			// (because it's in the the local cache)
 			thisCacheDir := fs.remotes[0].cacheDir
-			_, err = os.Stat(thisCacheDir)
-			So(err, ShouldBeNil)
+			_, errf = os.Stat(thisCacheDir)
+			So(errf, ShouldBeNil)
 			cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
-			_, err = os.Stat(cachePath)
-			So(err, ShouldBeNil)
+			_, errf = os.Stat(cachePath)
+			So(errf, ShouldBeNil)
 
 			// and it's statable and listable
-			_, err = os.Stat(path)
-			So(err, ShouldBeNil)
+			_, errf = os.Stat(path)
+			So(errf, ShouldBeNil)
 
-			entries, err := ioutil.ReadDir(mountPoint)
-			So(err, ShouldBeNil)
+			entries, errf := ioutil.ReadDir(mountPoint)
+			So(errf, ShouldBeNil)
 			details := dirDetails(entries)
 			rootEntries := []string{"100k.lines:file:700000", bigFileEntry, "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir", "write.test:file:11"}
 			So(details, ShouldResemble, rootEntries)
 
 			// unmounting causes the local cached file to be deleted
-			err = fs.Unmount()
-			So(err, ShouldBeNil)
+			errf = fs.Unmount()
+			So(errf, ShouldBeNil)
 
-			_, err = os.Stat(cachePath)
-			So(err, ShouldNotBeNil)
-			So(os.IsNotExist(err), ShouldBeTrue)
-			_, err = os.Stat(thisCacheDir)
-			So(err, ShouldNotBeNil)
-			So(os.IsNotExist(err), ShouldBeTrue)
-			_, err = os.Stat(path)
-			So(err, ShouldNotBeNil)
-			So(os.IsNotExist(err), ShouldBeTrue)
+			_, errf = os.Stat(cachePath)
+			So(errf, ShouldNotBeNil)
+			So(os.IsNotExist(errf), ShouldBeTrue)
+			_, errf = os.Stat(thisCacheDir)
+			So(errf, ShouldNotBeNil)
+			So(os.IsNotExist(errf), ShouldBeTrue)
+			_, errf = os.Stat(path)
+			So(errf, ShouldNotBeNil)
+			So(os.IsNotExist(errf), ShouldBeTrue)
 
 			// remounting lets us read the file again - it actually got
 			// uploaded
-			err = fs.Mount(remoteConfig)
-			So(err, ShouldBeNil)
+			errf = fs.Mount(remoteConfig)
+			So(errf, ShouldBeNil)
 
 			cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
-			_, err = os.Stat(cachePath)
-			So(err, ShouldNotBeNil)
-			So(os.IsNotExist(err), ShouldBeTrue)
+			_, errf = os.Stat(cachePath)
+			So(errf, ShouldNotBeNil)
+			So(os.IsNotExist(errf), ShouldBeTrue)
 
-			bytes, err = ioutil.ReadFile(path)
-			So(err, ShouldBeNil)
+			bytes, errf = ioutil.ReadFile(path)
+			So(errf, ShouldBeNil)
 			So(bytes, ShouldResemble, b)
 
-			_, err = os.Stat(cachePath)
-			So(err, ShouldBeNil)
+			_, errf = os.Stat(cachePath)
+			So(errf, ShouldBeNil)
 
 			Convey("You can append to a cached file", func() {
 				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
@@ -748,8 +750,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 					err := os.Truncate(path, 0)
 					So(err, ShouldBeNil)
 
-					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
-					stat, err := os.Stat(cachePath)
+					cachePath2 := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
+					stat, err := os.Stat(cachePath2)
 					So(err, ShouldBeNil)
 					So(stat.Size(), ShouldEqual, 0)
 					stat, err = os.Stat(path)
@@ -759,15 +761,15 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
 
-					stat, err = os.Stat(cachePath)
+					_, err = os.Stat(cachePath2)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
 					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
-					cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
-					stat, err = os.Stat(cachePath)
+					cachePath2 = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
+					_, err = os.Stat(cachePath2)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 					stat, err = os.Stat(path)
@@ -781,7 +783,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 						err = os.Remove(path)
 						So(err, ShouldBeNil)
 
-						_, err = os.Stat(cachePath)
+						_, err = os.Stat(cachePath2)
 						So(err, ShouldNotBeNil)
 						So(os.IsNotExist(err), ShouldBeTrue)
 						_, err = os.Stat(path)
@@ -794,8 +796,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 					err := os.Truncate(path, 3)
 					So(err, ShouldBeNil)
 
-					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
-					stat, err := os.Stat(cachePath)
+					cachePath2 := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
+					stat, err := os.Stat(cachePath2)
 					So(err, ShouldBeNil)
 					So(stat.Size(), ShouldEqual, 3)
 					stat, err = os.Stat(path)
@@ -805,21 +807,21 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
 
-					stat, err = os.Stat(cachePath)
+					_, err = os.Stat(cachePath2)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 
 					err = fs.Mount(remoteConfig)
 					So(err, ShouldBeNil)
 
-					cachePath = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
-					stat, err = os.Stat(cachePath)
+					cachePath2 = fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
+					_, err = os.Stat(cachePath2)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 					stat, err = os.Stat(path)
 					So(err, ShouldBeNil)
 					So(stat.Size(), ShouldEqual, 3)
-					bytes, err := ioutil.ReadFile(path)
+					bytes, err = ioutil.ReadFile(path)
 					So(err, ShouldBeNil)
 					So(string(bytes), ShouldEqual, "wri")
 
@@ -839,15 +841,15 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 					f.Close()
 					So(err, ShouldBeNil)
 
-					bytes, err := ioutil.ReadFile(path)
+					bytes, err = ioutil.ReadFile(path)
 					So(err, ShouldBeNil)
 					So(string(bytes), ShouldEqual, line)
 
-					cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
+					cachePath2 := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("write.test"))
 					err = fs.Unmount()
 					So(err, ShouldBeNil)
 
-					_, err = os.Stat(cachePath)
+					_, err = os.Stat(cachePath2)
 					So(err, ShouldNotBeNil)
 					So(os.IsNotExist(err), ShouldBeTrue)
 					_, err = os.Stat(path)
@@ -869,7 +871,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			Convey("You can rename files using mv", func() {
 				dest := mountPoint + "/write.moved"
 				cmd := exec.Command("mv", path, dest)
-				err = cmd.Run()
+				err := cmd.Run()
 				So(err, ShouldBeNil)
 
 				bytes, err = ioutil.ReadFile(dest)
@@ -902,13 +904,13 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			Convey("You can rename uncached files using os.Rename", func() {
 				// unmount first to clear the cache
-				err = fs.Unmount()
+				err := fs.Unmount()
 				So(err, ShouldBeNil)
 				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
 				dest := mountPoint + "/write.moved"
-				err := os.Rename(path, dest)
+				err = os.Rename(path, dest)
 				So(err, ShouldBeNil)
 
 				_, err = os.Stat(cachePath)
@@ -1001,21 +1003,21 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			newDir := mountPoint + "/newdir_test"
 			subDir := mountPoint + "/sub"
 			cmd := exec.Command("mv", subDir, newDir)
-			err = cmd.Run()
+			err := cmd.Run()
 			So(err, ShouldNotBeNil)
 		})
 
 		Convey("You can't remove remote directories", func() {
 			subDir := mountPoint + "/sub"
 			cmd := exec.Command("rmdir", subDir)
-			err = cmd.Run()
+			err := cmd.Run()
 			So(err, ShouldNotBeNil)
 		})
 
 		Convey("You can create directories and rename and remove those", func() {
 			newDir := mountPoint + "/newdir_test"
 			cmd := exec.Command("mkdir", newDir)
-			err = cmd.Run()
+			err := cmd.Run()
 			So(err, ShouldBeNil)
 
 			entries, err := ioutil.ReadDir(mountPoint)
@@ -1075,14 +1077,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		Convey("Given a local directory", func() {
 			mvDir := filepath.Join(tmpdir, "mvtest")
 			mvSubDir := filepath.Join(mvDir, "mvsubdir")
-			err = os.MkdirAll(mvSubDir, os.FileMode(0700))
-			So(err, ShouldBeNil)
+			errf := os.MkdirAll(mvSubDir, os.FileMode(0700))
+			So(errf, ShouldBeNil)
 			mvFile := filepath.Join(mvSubDir, "file")
 			mvBytes := []byte("mvfile\n")
-			err = ioutil.WriteFile(mvFile, mvBytes, 0644)
-			So(err, ShouldBeNil)
-			err = ioutil.WriteFile(filepath.Join(mvDir, "a.file"), mvBytes, 0644)
-			So(err, ShouldBeNil)
+			errf = ioutil.WriteFile(mvFile, mvBytes, 0644)
+			So(errf, ShouldBeNil)
+			errf = ioutil.WriteFile(filepath.Join(mvDir, "a.file"), mvBytes, 0644)
+			So(errf, ShouldBeNil)
 
 			Convey("You can mv it to the mount point", func() {
 				mountDir := filepath.Join(mountPoint, "mvtest")
@@ -1090,7 +1092,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				dest2 := filepath.Join(mountDir, "a.file")
 
 				cmd := exec.Command("mv", mvDir, mountDir)
-				err = cmd.Run()
+				err := cmd.Run()
 				So(err, ShouldBeNil)
 
 				bytes, err := ioutil.ReadFile(dest)
@@ -1119,7 +1121,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				dest2 := filepath.Join(mountPoint, "a.file")
 
 				cmd := exec.Command("sh", "-c", fmt.Sprintf("mv %s/* %s/", mvDir, mountPoint))
-				err = cmd.Run()
+				err := cmd.Run()
 				So(err, ShouldBeNil)
 
 				bytes, err := ioutil.ReadFile(dest)
@@ -1147,7 +1149,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		Convey("Trying to read a non-existent file fails as expected", func() {
 			name := "non-existent.file"
 			path := mountPoint + "/" + name
-			_, err = streamFile(path, 0)
+			_, err := streamFile(path, 0)
 			So(err, ShouldNotBeNil)
 			So(os.IsNotExist(err), ShouldBeTrue)
 		})
@@ -1168,7 +1170,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			fs.fileToRemote[name] = fs.fileToRemote["big.file"]
 			fs.mapMutex.Unlock()
 			So(fs.files[name], ShouldNotBeNil)
-			_, err = streamFile(path, 0)
+			_, err := streamFile(path, 0)
 			So(err, ShouldNotBeNil)
 			So(os.IsNotExist(err), ShouldBeTrue)
 			So(fs.files[name], ShouldNotBeNil) // *** unfortunately we only know it doesn't exist when we try to read, which means we can't update fs
@@ -1277,7 +1279,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 				r.Seek(11, io.SeekStart)
 
-				b := make([]byte, 5, 5)
+				b := make([]byte, 5)
 				done, err := io.ReadFull(r, b)
 				r.Close()
 				So(err, ShouldBeNil)
@@ -1312,7 +1314,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 				r.Seek(11, io.SeekStart)
 
-				b = make([]byte, 5, 5)
+				b = make([]byte, 5)
 				done, err = io.ReadFull(r, b)
 				So(err, ShouldBeNil)
 				So(done, ShouldEqual, 5)
@@ -1320,7 +1322,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 				r.Seek(88889, io.SeekStart)
 
-				b = make([]byte, 19, 19)
+				b = make([]byte, 19)
 				done, err = io.ReadFull(r, b)
 				r.Close()
 				So(err, ShouldBeNil)
@@ -1343,14 +1345,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 
-				stat, err = os.Stat(cachePath)
+				_, err = os.Stat(cachePath)
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)
 
 				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
-				stat, err = os.Stat(cachePath)
+				_, err = os.Stat(cachePath)
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)
 				stat, err = os.Stat(path)
@@ -1376,14 +1378,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 
-				stat, err = os.Stat(cachePath)
+				_, err = os.Stat(cachePath)
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)
 
 				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
-				stat, err = os.Stat(cachePath)
+				_, err = os.Stat(cachePath)
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)
 				stat, err = os.Stat(path)
@@ -1410,14 +1412,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				err = fs.Unmount()
 				So(err, ShouldBeNil)
 
-				stat, err = os.Stat(cachePath)
+				_, err = os.Stat(cachePath)
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)
 
 				err = fs.Mount(remoteConfig)
 				So(err, ShouldBeNil)
 
-				stat, err = os.Stat(cachePath)
+				_, err = os.Stat(cachePath)
 				So(err, ShouldNotBeNil)
 				So(os.IsNotExist(err), ShouldBeTrue)
 				stat, err = os.Stat(path)
@@ -1505,13 +1507,13 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				subEntries := []string{"100k.lines:file:700000", bigFileEntry, "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir", "write.test:file:11"}
 				So(details, ShouldResemble, subEntries)
 
-				path := mountPoint + "/write.test2"
+				path2 := mountPoint + "/write.test2"
 				b := []byte("write test2\n")
-				err = ioutil.WriteFile(path, b, 0644)
+				err = ioutil.WriteFile(path2, b, 0644)
 				So(err, ShouldBeNil)
 
 				// it's statable and listable
-				_, err = os.Stat(path)
+				_, err = os.Stat(path2)
 				So(err, ShouldBeNil)
 
 				entries, err = ioutil.ReadDir(mountPoint)
@@ -1521,10 +1523,10 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				So(details, ShouldResemble, subEntries)
 
 				// once deleted, it's no longer listed
-				err = os.Remove(path)
+				err = os.Remove(path2)
 				So(err, ShouldBeNil)
 
-				_, err = os.Stat(path)
+				_, err = os.Stat(path2)
 				So(err, ShouldNotBeNil)
 
 				entries, err = ioutil.ReadDir(mountPoint)
@@ -1541,6 +1543,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			Convey("You can touch an uncached file", func() {
 				info, err := os.Stat(path)
+				So(err, ShouldBeNil)
 				cmd := exec.Command("touch", "-d", "2006-01-02 15:04:05", path)
 				err = cmd.Run()
 				So(err, ShouldBeNil)
@@ -1569,6 +1572,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			Convey("You can touch a cached file", func() {
 				info, err := os.Stat(path)
+				So(err, ShouldBeNil)
 				_, err = ioutil.ReadFile(path)
 				So(err, ShouldBeNil)
 
@@ -1591,6 +1595,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			Convey("You can directly change the mtime on a cached file", func() {
 				info, err := os.Stat(path)
+				So(err, ShouldBeNil)
 				_, err = ioutil.ReadFile(path)
 				So(err, ShouldBeNil)
 
@@ -1605,6 +1610,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			Convey("But not an uncached one", func() {
 				info, err := os.Stat(path)
+				So(err, ShouldBeNil)
 				t := time.Now().Add(5 * time.Minute)
 				err = os.Chtimes(path, t, t)
 				So(err, ShouldBeNil)
@@ -1743,7 +1749,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		Convey("You can touch a non-existent file", func() {
 			path := mountPoint + "/write.test"
 			cmd := exec.Command("touch", path)
-			err = cmd.Run()
+			err := cmd.Run()
 			defer func() {
 				err = os.Remove(path)
 				So(err, ShouldBeNil)
@@ -1911,9 +1917,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			times := make(chan time.Duration, 2)
 			errors := make(chan error, 2)
 			streamer := func(offset, size int) {
-				t := time.Now()
+				t2 := time.Now()
 				thisRead, thisErr := streamFile(path, int64(offset))
-				times <- time.Since(t)
+				times <- time.Since(t2)
 				if thisErr != nil {
 					errors <- thisErr
 					return
@@ -1947,7 +1953,13 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			So(<-errors, ShouldBeNil)
 			pt1 := <-times
 			pt2 := <-times
-			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*110) * time.Nanosecond
+			var multiplier int64
+			if runtime.NumCPU() == 1 {
+				multiplier = 200
+			} else {
+				multiplier = 110
+			}
+			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*multiplier) * time.Nanosecond
 			// ets := time.Duration((wt.Nanoseconds()/100)*160) * time.Nanosecond
 			// fmt.Printf("\nwt: %s, pt1: %s, pt2: %s, ot: %s, eto: %s, ets: %s\n", wt, pt1, pt2, ot, eto, ets)
 			So(ot, ShouldBeLessThan, eto)
@@ -2025,9 +2037,17 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			// et2 := time.Duration((f2t.Nanoseconds()/100)*190) * time.Nanosecond
 			var multiplier int64
 			if bigFileSize > 10000000 {
-				multiplier = 110
+				if runtime.NumCPU() == 1 {
+					multiplier = 200
+				} else {
+					multiplier = 110
+				}
 			} else {
-				multiplier = 250
+				if runtime.NumCPU() == 1 {
+					multiplier = 350
+				} else {
+					multiplier = 250
+				}
 			}
 			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*multiplier) * time.Nanosecond
 			// *** these timing tests are too unreliable when using minio server
@@ -2268,15 +2288,15 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 	var bigFileGetTimeUncached time.Duration
 	Convey("You can mount without local file caching", t, func() {
 		remoteConfig.CacheData = false
-		fs, err := New(cfg)
-		So(err, ShouldBeNil)
+		fs, errc := New(cfg)
+		So(errc, ShouldBeNil)
 
-		err = fs.Mount(remoteConfig)
-		So(err, ShouldBeNil)
+		errm := fs.Mount(remoteConfig)
+		So(errm, ShouldBeNil)
 
 		defer func() {
-			err = fs.Unmount()
-			So(err, ShouldBeNil)
+			erru := fs.Unmount()
+			So(erru, ShouldBeNil)
 		}()
 
 		cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("big.file"))
@@ -2399,14 +2419,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			r.Seek(36, io.SeekStart)
 
-			b := make([]byte, 10, 10)
+			b := make([]byte, 10)
 			done, err := io.ReadFull(r, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 10)
 			So(b, ShouldResemble, []byte("1234567890"))
 
 			r.Seek(10, io.SeekStart)
-			b = make([]byte, 10, 10)
+			b = make([]byte, 10)
 			done, err = io.ReadFull(r, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 10)
@@ -2419,14 +2439,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			defer rbig.Close()
 
 			rbig.Seek(350000, io.SeekStart)
-			b = make([]byte, 6, 6)
+			b = make([]byte, 6)
 			done, err = io.ReadFull(rbig, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 6)
 			So(b, ShouldResemble, []byte("050001"))
 
 			rbig.Seek(175000, io.SeekStart)
-			b = make([]byte, 6, 6)
+			b = make([]byte, 6)
 			done, err = io.ReadFull(rbig, b)
 			So(err, ShouldBeNil)
 			So(done, ShouldEqual, 6)
@@ -2478,7 +2498,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		Convey("Trying to read a non-existent file fails as expected", func() {
 			name := "non-existent.file"
 			path := mountPoint + "/" + name
-			_, err = streamFile(path, 0)
+			_, err := streamFile(path, 0)
 			So(err, ShouldNotBeNil)
 			So(os.IsNotExist(err), ShouldBeTrue)
 		})
@@ -2495,7 +2515,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			fs.files[name] = fs.files["big.file"]
 			fs.fileToRemote[name] = fs.fileToRemote["big.file"]
 			fs.mapMutex.Unlock()
-			_, err = streamFile(path, 0)
+			_, err := streamFile(path, 0)
 			So(err, ShouldNotBeNil)
 			So(os.IsNotExist(err), ShouldBeTrue)
 		})
@@ -2504,16 +2524,16 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 	Convey("You can mount in write mode without any caching", t, func() {
 		remoteConfig.Write = true
 		remoteConfig.CacheData = false
-		fs, err := New(cfg)
-		So(err, ShouldBeNil)
+		fs, errc := New(cfg)
+		So(errc, ShouldBeNil)
 
-		err = fs.Mount(remoteConfig)
-		So(err, ShouldBeNil)
+		errm := fs.Mount(remoteConfig)
+		So(errm, ShouldBeNil)
 
 		defer func() {
-			err = fs.Unmount()
+			erru := fs.Unmount()
 			remoteConfig.Write = false
-			So(err, ShouldBeNil)
+			So(erru, ShouldBeNil)
 		}()
 
 		Convey("Trying to write works", func() {
@@ -2604,14 +2624,14 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		Convey("Given a local directory", func() {
 			mvDir := filepath.Join(tmpdir, "mvtest2")
 			mvSubDir := filepath.Join(mvDir, "mvsubdir")
-			err = os.MkdirAll(mvSubDir, os.FileMode(0700))
-			So(err, ShouldBeNil)
+			errf := os.MkdirAll(mvSubDir, os.FileMode(0700))
+			So(errf, ShouldBeNil)
 			mvFile := filepath.Join(mvSubDir, "file")
 			mvBytes := []byte("mvfile\n")
-			err = ioutil.WriteFile(mvFile, mvBytes, 0644)
-			So(err, ShouldBeNil)
-			err = ioutil.WriteFile(filepath.Join(mvDir, "a.file"), mvBytes, 0644)
-			So(err, ShouldBeNil)
+			errf = ioutil.WriteFile(mvFile, mvBytes, 0644)
+			So(errf, ShouldBeNil)
+			errf = ioutil.WriteFile(filepath.Join(mvDir, "a.file"), mvBytes, 0644)
+			So(errf, ShouldBeNil)
 
 			Convey("You can mv it to the mount point", func() {
 				mountDir := filepath.Join(mountPoint, "mvtest2")
@@ -2658,7 +2678,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				dest2 := filepath.Join(mountPoint, "a.file")
 
 				cmd := exec.Command("sh", "-c", fmt.Sprintf("mv %s/* %s/", mvDir, mountPoint))
-				err = cmd.Run()
+				err := cmd.Run()
 				So(err, ShouldBeNil)
 
 				bytes, err := ioutil.ReadFile(dest)
@@ -2691,8 +2711,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
 			SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		}
-		accessor, err := NewS3Accessor(manualConfig2)
-		So(err, ShouldBeNil)
+		accessor, errn = NewS3Accessor(manualConfig2)
+		So(errn, ShouldBeNil)
 		remoteConfig2 := &RemoteConfig{
 			Accessor:  accessor,
 			CacheData: true,
@@ -2798,25 +2818,26 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 	})
 
 	Convey("You can mount the bucket directly", t, func() {
-		u, err := url.Parse(target)
+		u, errp := url.Parse(target)
+		So(errp, ShouldBeNil)
 		parts := strings.Split(u.Path[1:], "/")
 		manualConfig.Target = u.Scheme + "://" + u.Host + "/" + parts[0]
-		accessor, err = NewS3Accessor(manualConfig)
-		So(err, ShouldBeNil)
+		accessor, errn = NewS3Accessor(manualConfig)
+		So(errn, ShouldBeNil)
 		remoteConfig := &RemoteConfig{
 			Accessor:  accessor,
 			CacheData: true,
 			Write:     false,
 		}
-		fs, err := New(cfg)
-		So(err, ShouldBeNil)
+		fs, errc := New(cfg)
+		So(errc, ShouldBeNil)
 
-		err = fs.Mount(remoteConfig)
-		So(err, ShouldBeNil)
+		errm := fs.Mount(remoteConfig)
+		So(errm, ShouldBeNil)
 
 		defer func() {
-			err = fs.Unmount()
-			So(err, ShouldBeNil)
+			erru := fs.Unmount()
+			So(erru, ShouldBeNil)
 		}()
 
 		Convey("Listing bucket directory works", func() {
@@ -2828,15 +2849,15 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		})
 
 		Convey("You can't mount more than once at a time", func() {
-			err = fs.Mount(remoteConfig)
+			err := fs.Mount(remoteConfig)
 			So(err, ShouldNotBeNil)
 		})
 	})
 
 	Convey("For non-existent paths...", t, func() {
 		manualConfig.Target = target + "/nonexistent/subdir"
-		accessor, err = NewS3Accessor(manualConfig)
-		So(err, ShouldBeNil)
+		accessor, errn = NewS3Accessor(manualConfig)
+		So(errn, ShouldBeNil)
 
 		Convey("You can mount them read-only", func() {
 			remoteConfig := &RemoteConfig{
@@ -2924,8 +2945,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 	if strings.HasPrefix(target, "https://cog.sanger.ac.uk") {
 		Convey("You can mount a public bucket", t, func() {
 			manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository"
-			accessor, err = NewS3Accessor(manualConfig)
-			So(err, ShouldBeNil)
+			accessor, errn = NewS3Accessor(manualConfig)
+			So(errn, ShouldBeNil)
 			remoteConfig := &RemoteConfig{
 				Accessor:  accessor,
 				CacheData: true,
@@ -2966,8 +2987,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 		Convey("You can mount a public bucket at a deep path", t, func() {
 			manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository/references/Homo_sapiens/GRCh38_full_analysis_set_plus_decoy_hla/all/fasta"
-			accessor, err = NewS3Accessor(manualConfig)
-			So(err, ShouldBeNil)
+			accessor, errn = NewS3Accessor(manualConfig)
+			So(errn, ShouldBeNil)
 			remoteConfig := &RemoteConfig{
 				Accessor:  accessor,
 				CacheData: true,
@@ -3059,8 +3080,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			manualConfig.Target = "https://cog.sanger.ac.uk/npg-repository"
 			manualConfig.AccessKey = ""
 			manualConfig.SecretKey = ""
-			accessor, err = NewS3Accessor(manualConfig)
-			So(err, ShouldBeNil)
+			accessor, errn = NewS3Accessor(manualConfig)
+			So(errn, ShouldBeNil)
 			remoteConfig := &RemoteConfig{
 				Accessor:  accessor,
 				CacheData: true,
@@ -3090,7 +3111,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 	}
 }
 
-func dirDetails(entries []os.FileInfo) (details []string) {
+func dirDetails(entries []os.FileInfo) []string {
+	var details []string
 	for _, entry := range entries {
 		info := entry.Name()
 		if entry.IsDir() {
@@ -3101,25 +3123,25 @@ func dirDetails(entries []os.FileInfo) (details []string) {
 		details = append(details, info)
 	}
 	sort.Slice(details, func(i, j int) bool { return details[i] < details[j] })
-	return
+	return details
 }
 
 func streamFile(src string, seek int64) (read int64, err error) {
 	r, err := os.Open(src)
 	if err != nil {
-		return
+		return read, err
 	}
 	if seek > 0 {
 		r.Seek(seek, io.SeekStart)
 	}
 	read, err = stream(r)
 	r.Close()
-	return
+	return read, err
 }
 
 func stream(r io.Reader) (read int64, err error) {
 	br := bufio.NewReader(r)
-	b := make([]byte, 1000, 1000)
+	b := make([]byte, 1000)
 	for {
 		done, rerr := br.Read(b)
 		if rerr != nil {
@@ -3130,5 +3152,5 @@ func stream(r io.Reader) (read int64, err error) {
 		}
 		read += int64(done)
 	}
-	return
+	return read, err
 }
