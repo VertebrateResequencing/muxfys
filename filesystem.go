@@ -294,7 +294,7 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 	var create bool
 	if err != nil {
 		err = os.Remove(localPath)
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			fs.Warn("openCached remove cache file failed", "path", localPath, "err", err)
 		}
 		create = true
