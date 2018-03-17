@@ -1957,7 +1957,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			if runtime.NumCPU() == 1 {
 				multiplier = 240
 			} else {
-				multiplier = 160
+				multiplier = 190
 			}
 			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*multiplier) * time.Nanosecond
 			// ets := time.Duration((wt.Nanoseconds()/100)*160) * time.Nanosecond
