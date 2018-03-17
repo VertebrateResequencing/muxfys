@@ -84,6 +84,7 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 	if uint64(offset) >= f.attr.Size {
 		// nothing to read
+		f.Warn("Read offset >= file size", "offset", offset, "size", f.attr.Size)
 		return nil, fuse.OK
 	}
 
@@ -145,13 +146,13 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 	// otherwise open remote object (if it doesn't exist, we only get an error
 	// when we try to fillBuffer, but that's OK)
-	object, status := f.r.getObject(f.path, offset)
+	reader, status := f.r.getObject(f.path, offset)
 	if status != fuse.OK {
 		return fuse.ReadResultData([]byte{}), status
 	}
 
 	// store the reader to read from later
-	f.reader = object
+	f.reader = reader
 
 	status = f.fillBuffer(buf, offset)
 	if status != fuse.OK {
@@ -162,29 +163,41 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 // fillBuffer reads from our remote reader to the Read() buffer.
 func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
-	bytesRead, err := io.ReadFull(f.reader, buf)
+	// io.ReadFull throws away errors if enough bytes were read; implement our
+	// own just in case weird stuff happens. It's also annoying in converting
+	// EOF errors to ErrUnexpectedEOF, which we don't do here
+	var bytesRead int
+	min := len(buf)
+	var err error
+	for bytesRead < min && err == nil {
+		var nn int
+		nn, err = f.reader.Read(buf[bytesRead:])
+		bytesRead += nn
+	}
+
 	if err != nil {
 		errc := f.reader.Close()
 		if errc != nil {
 			f.Warn("fillBuffer reader close failed", "err", errc)
 		}
 		f.reader = nil
-		if err == io.ErrUnexpectedEOF || err == io.EOF {
+		if err == io.EOF {
+			f.Info("fillBuffer read reached eof")
 			status = fuse.OK
 		} else {
-			f.Warn("fillBuffer read failed", "err", err)
+			f.Error("fillBuffer read failed", "err", err)
 			if f.readWorked && strings.Contains(err.Error(), "reset by peer") {
 				// if connection reset by peer and a read previously worked
 				// we try getting a new object before trying again, to cope with
 				// temporary networking issues
-				object, goStatus := f.r.getObject(f.path, offset)
+				reader, goStatus := f.r.getObject(f.path, offset)
 				if goStatus == fuse.OK {
 					f.Info("fillBuffer retry got the object")
-					f.reader = object
+					f.reader = reader
 					f.readWorked = false
 					return f.fillBuffer(buf, offset)
 				}
-				f.Warn("fillBuffer retry failed to get the object")
+				f.Error("fillBuffer retry failed to get the object")
 			}
 			status = f.r.statusFromErr("Read("+f.path+")", err)
 		}

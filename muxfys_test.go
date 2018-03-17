@@ -163,21 +163,24 @@ func (a *localAccessor) ListEntries(dir string) ([]RemoteAttr, error) {
 }
 
 // OpenFile implements RemoteAccessor by deferring to local fs.
-func (a *localAccessor) OpenFile(path string) (io.ReadCloser, error) {
+func (a *localAccessor) OpenFile(path string, offset int64) (io.ReadCloser, error) {
 	resetMutex.Lock()
 	defer resetMutex.Unlock()
 	if resetFail {
 		return nil, fmt.Errorf("connection reset by peer")
 	}
 	f, err := os.Open(path)
+	if offset > 0 {
+		f.Seek(offset, io.SeekStart)
+	}
 	return &openedObject{object: f}, err
 }
 
 // Seek implements RemoteAccessor by deferring to local fs.
-func (a *localAccessor) Seek(rc io.ReadCloser, offset int64) error {
+func (a *localAccessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
 	object := rc.(*openedObject)
 	_, err := object.Seek(offset, io.SeekStart)
-	return err
+	return object, err
 }
 
 // CopyFile implements RemoteAccessor by deferring to local fs.

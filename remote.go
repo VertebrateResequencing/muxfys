@@ -97,12 +97,12 @@ type RemoteAccessor interface {
 	ListEntries(dir string) ([]RemoteAttr, error)
 
 	// OpenFile opens a remote file ready for reading.
-	OpenFile(path string) (io.ReadCloser, error)
+	OpenFile(path string, offset int64) (io.ReadCloser, error)
 
 	// Seek should take an object returned by OpenFile() (from the same
 	// RemoteAccessor implementation) and seek to the given offset from the
 	// beginning of the file.
-	Seek(rc io.ReadCloser, offset int64) error
+	Seek(path string, rc io.ReadCloser, offset int64) (io.ReadCloser, error)
 
 	// CopyFile should do a remote copy of source to dest without involving the
 	// the local file system.
@@ -422,38 +422,29 @@ func (r *remote) findObjects(remotePath string) ([]RemoteAttr, fuse.Status) {
 // from the start of the file).
 func (r *remote) getObject(remotePath string, offset int64) (io.ReadCloser, fuse.Status) {
 	// get object and seek, with automatic retries
-	var object io.ReadCloser
+	var reader io.ReadCloser
 	rf := func() error {
 		var err error
-		object, err = r.accessor.OpenFile(remotePath)
-		if err != nil {
-			return err
-		}
-
-		if offset > 0 {
-			err = r.accessor.Seek(object, offset)
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
+		reader, err = r.accessor.OpenFile(remotePath, offset)
+		return err
 	}
-	status := r.retry("OpenFile/Seek", remotePath, rf)
-	return object, status
+	status := r.retry("OpenFile", remotePath, rf)
+	return reader, status
 }
 
 // seek takes the object returned by getObject and seeks it to the desired
-// offset from the start of the file. If this fails a number of repeated
-// attempts will be made which involves creating a new object, which is why
-// remotePath must be supplied, and why you get back an object. This will be the
-// same object you supplied if there were no problems.
+// offset from the start of the file. This may involve creating a new object,
+// which is why remotePath must be supplied, and why you get back an object.
+// This might be the same object you supplied if there were no problems.
 func (r *remote) seek(rc io.ReadCloser, offset int64, remotePath string) (io.ReadCloser, fuse.Status) {
-	err := r.accessor.Seek(rc, offset)
-	if err != nil {
-		return r.getObject(remotePath, offset)
+	var reader io.ReadCloser
+	rf := func() error {
+		var err error
+		reader, err = r.accessor.Seek(remotePath, rc, offset)
+		return err
 	}
-	return rc, fuse.OK
+	status := r.retry("Seek", remotePath, rf)
+	return reader, status
 }
 
 // copyFile remotely copies a file to a new remote path. oldPath is treated

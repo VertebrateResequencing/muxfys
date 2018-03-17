@@ -312,15 +312,33 @@ func (a *S3Accessor) ListEntries(dir string) ([]RemoteAttr, error) {
 }
 
 // OpenFile implements RemoteAccessor by deferring to minio.
-func (a *S3Accessor) OpenFile(path string) (io.ReadCloser, error) {
-	return a.client.GetObject(a.bucket, path, minio.GetObjectOptions{})
+func (a *S3Accessor) OpenFile(path string, offset int64) (io.ReadCloser, error) {
+	opts := minio.GetObjectOptions{}
+	if offset > 0 {
+		err := opts.SetRange(offset, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+	core := minio.Core{Client: a.client}
+	reader, _, err := core.GetObject(a.bucket, path, opts)
+	return reader, err
 }
 
 // Seek implements RemoteAccessor by deferring to minio.
-func (a *S3Accessor) Seek(rc io.ReadCloser, offset int64) error {
-	object := rc.(*minio.Object)
-	_, err := object.Seek(offset, io.SeekStart)
-	return err
+func (a *S3Accessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
+	err := rc.Close()
+	if err != nil {
+		return nil, err
+	}
+	opts := minio.GetObjectOptions{}
+	err = opts.SetRange(offset, 0)
+	if err != nil {
+		return nil, err
+	}
+	core := minio.Core{Client: a.client}
+	reader, _, err := core.GetObject(a.bucket, path, opts)
+	return reader, err
 }
 
 // CopyFile implements RemoteAccessor by deferring to minio.
