@@ -84,7 +84,6 @@ func (f *remoteFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 	if uint64(offset) >= f.attr.Size {
 		// nothing to read
-		f.Warn("Read offset >= file size", "offset", offset, "size", f.attr.Size)
 		return nil, fuse.OK
 	}
 
