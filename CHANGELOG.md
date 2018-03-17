@@ -5,6 +5,20 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [3.0.0] - 2018-03-17
+### Changed
+- Backwards incompatible API changes: RemoteAccessor DeleteIncompleteUpload now
+returns an error. RemoteAccessor OpenFile() now takes an offset to open and seek
+in 1 call. RemoteAccessor Seek() now takes a path and returns a ReadCloser,
+since the implementation may be the same as OpenFile().
+- Makefile includes improved way of linting.
+- Code delinted.
+- Improved logging for errors.
+
+### Fixed
+- Tests work under MacOS
+
+
 ## [2.0.6] - 2018-01-17
 ## Fixed
 - When using a shared cache directory, files cached by a prior process are now
