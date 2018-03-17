@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 //
 //  This file is part of muxfys.
@@ -20,8 +20,6 @@ package muxfys
 
 import (
 	"fmt"
-	"github.com/inconshreveable/log15"
-	. "github.com/smartystreets/goconvey/convey"
 	"io"
 	"io/ioutil"
 	"log"
@@ -33,6 +31,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/inconshreveable/log15"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 var uploadFail bool
@@ -69,20 +70,20 @@ type localAccessor struct {
 	target string
 }
 
-func (a *localAccessor) copyFile(source, dest string) (err error) {
+func (a *localAccessor) copyFile(source, dest string) error {
 	in, err := os.Open(source)
 	if err != nil {
-		return
+		return err
 	}
 	defer in.Close()
 	dir := filepath.Dir(dest)
 	err = os.MkdirAll(dir, 0700)
 	if err != nil {
-		return
+		return err
 	}
 	out, err := os.Create(dest)
 	if err != nil {
-		return
+		return err
 	}
 	defer func() {
 		cerr := out.Close()
@@ -91,10 +92,9 @@ func (a *localAccessor) copyFile(source, dest string) (err error) {
 		}
 	}()
 	if _, err = io.Copy(out, in); err != nil {
-		return
+		return err
 	}
-	err = out.Sync()
-	return
+	return out.Sync()
 }
 
 // DownloadFile implements RemoteAccessor by deferring to local fs.
@@ -111,18 +111,18 @@ func (a *localAccessor) UploadFile(source, dest, contentType string) error {
 }
 
 // UploadData implements RemoteAccessor by deferring to local fs.
-func (a *localAccessor) UploadData(data io.Reader, dest string) (err error) {
+func (a *localAccessor) UploadData(data io.Reader, dest string) error {
 	if uploadFail {
 		return fmt.Errorf("upload failed")
 	}
 	dir := filepath.Dir(dest)
-	err = os.MkdirAll(dir, 0700)
+	err := os.MkdirAll(dir, 0700)
 	if err != nil {
-		return
+		return err
 	}
 	out, err := os.Create(dest)
 	if err != nil {
-		return
+		return err
 	}
 	defer func() {
 		cerr := out.Close()
@@ -131,23 +131,23 @@ func (a *localAccessor) UploadData(data io.Reader, dest string) (err error) {
 		}
 	}()
 	if _, err = io.Copy(out, data); err != nil {
-		return
+		return err
 	}
-	err = out.Sync()
-	return
+	return out.Sync()
 }
 
 // ListEntries implements RemoteAccessor by deferring to local fs.
-func (a *localAccessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
+func (a *localAccessor) ListEntries(dir string) ([]RemoteAttr, error) {
 	resetMutex.Lock()
 	defer resetMutex.Unlock()
 	if resetFail {
-		return ras, fmt.Errorf("connection reset by peer")
+		return nil, fmt.Errorf("connection reset by peer")
 	}
 	entries, err := ioutil.ReadDir(dir)
 	if err != nil {
-		return
+		return nil, err
 	}
+	var ras []RemoteAttr
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() {
@@ -159,25 +159,28 @@ func (a *localAccessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
 			MTime: entry.ModTime(),
 		})
 	}
-	return
+	return ras, err
 }
 
 // OpenFile implements RemoteAccessor by deferring to local fs.
-func (a *localAccessor) OpenFile(path string) (io.ReadCloser, error) {
+func (a *localAccessor) OpenFile(path string, offset int64) (io.ReadCloser, error) {
 	resetMutex.Lock()
 	defer resetMutex.Unlock()
 	if resetFail {
 		return nil, fmt.Errorf("connection reset by peer")
 	}
 	f, err := os.Open(path)
+	if offset > 0 {
+		f.Seek(offset, io.SeekStart)
+	}
 	return &openedObject{object: f}, err
 }
 
 // Seek implements RemoteAccessor by deferring to local fs.
-func (a *localAccessor) Seek(rc io.ReadCloser, offset int64) error {
+func (a *localAccessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
 	object := rc.(*openedObject)
 	_, err := object.Seek(offset, io.SeekStart)
-	return err
+	return object, err
 }
 
 // CopyFile implements RemoteAccessor by deferring to local fs.
@@ -191,8 +194,8 @@ func (a *localAccessor) DeleteFile(path string) error {
 }
 
 // DeleteIncompleteUpload implements RemoteAccessor by deferring to local fs.
-func (a *localAccessor) DeleteIncompleteUpload(path string) {
-	os.Remove(path)
+func (a *localAccessor) DeleteIncompleteUpload(path string) error {
+	return os.Remove(path)
 }
 
 // ErrorIsNotExists implements RemoteAccessor by deferring to os.
@@ -222,9 +225,9 @@ func (a *localAccessor) LocalPath(baseDir, remotePath string) string {
 }
 
 func TestMuxFys(t *testing.T) {
-	user, err := user.Current()
-	if err != nil {
-		log.Fatal(err)
+	user, errt := user.Current()
+	if errt != nil {
+		log.Fatal(errt)
 	}
 
 	// *** the cache deletion tests no longer work on nfs, don't know why!
@@ -233,15 +236,15 @@ func TestMuxFys(t *testing.T) {
 	//  log.Fatal(err)
 	// }
 
-	tmpdir, err := ioutil.TempDir("", "muxfys_testing")
-	if err != nil {
-		log.Fatal(err)
+	tmpdir, errt := ioutil.TempDir("", "muxfys_testing")
+	if errt != nil {
+		log.Fatal(errt)
 	}
 	defer os.RemoveAll(tmpdir)
 
-	err = os.Chdir(tmpdir)
-	if err != nil {
-		log.Fatal(err)
+	errt = os.Chdir(tmpdir)
+	if errt != nil {
+		log.Fatal(errt)
 	}
 	cacheBase := filepath.Join(tmpdir, "cacheBase")
 	os.MkdirAll(cacheBase, os.FileMode(0777))
@@ -251,26 +254,26 @@ func TestMuxFys(t *testing.T) {
 
 	sourcePoint := filepath.Join(tmpdir, "source")
 	os.MkdirAll(sourcePoint, os.FileMode(0777))
-	err = ioutil.WriteFile(filepath.Join(sourcePoint, "read.file"), []byte("test1\ntest2\n"), 0644)
-	if err != nil {
-		log.Fatal(err)
+	errt = ioutil.WriteFile(filepath.Join(sourcePoint, "read.file"), []byte("test1\ntest2\n"), 0644)
+	if errt != nil {
+		log.Fatal(errt)
 	}
 
 	sourceOtherDir := filepath.Join(sourcePoint, "other")
 	os.MkdirAll(sourceOtherDir, os.FileMode(0777))
-	err = ioutil.WriteFile(filepath.Join(sourceOtherDir, "read2.file"), []byte("test\n"), 0644)
-	if err != nil {
-		log.Fatal(err)
+	errt = ioutil.WriteFile(filepath.Join(sourceOtherDir, "read2.file"), []byte("test\n"), 0644)
+	if errt != nil {
+		log.Fatal(errt)
 	}
 
-	f, err := os.Create(filepath.Join(sourcePoint, "large.file"))
-	if err != nil {
-		log.Fatal(err)
+	f, errt := os.Create(filepath.Join(sourcePoint, "large.file"))
+	if errt != nil {
+		log.Fatal(errt)
 	}
 	for i := 1; i <= 10000; i++ {
-		_, err = f.WriteString(fmt.Sprintf("test%d\n", i))
-		if err != nil {
-			log.Fatal(err)
+		_, errt = f.WriteString(fmt.Sprintf("test%d\n", i))
+		if errt != nil {
+			log.Fatal(errt)
 		}
 	}
 	f.Sync()
@@ -293,7 +296,7 @@ func TestMuxFys(t *testing.T) {
 		defer efm.Unlock()
 		i = code
 	}
-	deathSignals = []os.Signal{syscall.SIGUNUSED}
+	deathSignals = []os.Signal{syscall.SIGUSR1}
 
 	Convey("You can make a New MuxFys with an explicit Mount", t, func() {
 		explicitMount := filepath.Join(tmpdir, "explicitMount")
@@ -303,8 +306,8 @@ func TestMuxFys(t *testing.T) {
 			Verbose:   true,
 			Retries:   2,
 		}
-		fs, err := New(cfg)
-		So(err, ShouldBeNil)
+		fs, errn := New(cfg)
+		So(errn, ShouldBeNil)
 
 		Convey("You can Mount() read-only uncached", func() {
 			remoteConfig := &RemoteConfig{
@@ -312,8 +315,8 @@ func TestMuxFys(t *testing.T) {
 				CacheData: false,
 				Write:     false,
 			}
-			err := fs.Mount(remoteConfig)
-			So(err, ShouldBeNil)
+			errm := fs.Mount(remoteConfig)
+			So(errm, ShouldBeNil)
 			defer fs.Unmount()
 
 			Convey("Once mounted you can't mount again", func() {
@@ -337,7 +340,7 @@ func TestMuxFys(t *testing.T) {
 				// doing it again is harmless
 				fs.UnmountOnDeath()
 
-				syscall.Kill(syscall.Getpid(), syscall.SIGUNUSED)
+				syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
 				<-time.After(500 * time.Millisecond)
 
 				fs.mutex.Lock()
@@ -354,11 +357,11 @@ func TestMuxFys(t *testing.T) {
 				So(fs.mounted, ShouldBeTrue)
 				So(i, ShouldEqual, 0)
 
-				err = fs.Unmount()
+				err := fs.Unmount()
 				So(err, ShouldBeNil)
 				So(fs.mounted, ShouldBeFalse)
 
-				syscall.Kill(syscall.Getpid(), syscall.SIGUNUSED)
+				syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
 				<-time.After(500 * time.Millisecond)
 
 				So(i, ShouldEqual, 0)
@@ -405,8 +408,8 @@ func TestMuxFys(t *testing.T) {
 				CacheData: true,
 				Write:     true,
 			}
-			err := fs.Mount(remoteConfig)
-			So(err, ShouldBeNil)
+			errm := fs.Mount(remoteConfig)
+			So(errm, ShouldBeNil)
 			defer fs.Unmount()
 
 			Convey("You can Unmount()", func() {
@@ -426,7 +429,7 @@ func TestMuxFys(t *testing.T) {
 
 			Convey("Unmounting after creating files uploads them", func() {
 				sourceFile1 := filepath.Join(sourcePoint, "created1.file")
-				_, err = os.Stat(sourceFile1)
+				_, err := os.Stat(sourceFile1)
 				So(err, ShouldNotBeNil)
 				sourceFile2 := filepath.Join(sourcePoint, "created2.file")
 				_, err = os.Stat(sourceFile2)
@@ -474,7 +477,7 @@ func TestMuxFys(t *testing.T) {
 
 			Convey("Unmounting reports failure to upload", func() {
 				sourceFile := filepath.Join(sourcePoint, "created.file")
-				_, err = os.Stat(sourceFile)
+				_, err := os.Stat(sourceFile)
 				So(err, ShouldNotBeNil)
 
 				f, err := os.OpenFile(filepath.Join(explicitMount, "created.file"), os.O_RDWR|os.O_CREATE, 0666)
@@ -558,12 +561,17 @@ func TestMuxFys(t *testing.T) {
 
 				Convey("Logs() tells you what happened", func() {
 					logs := fs.Logs()
-					So(len(logs), ShouldEqual, 2)
-					So(logs[1], ShouldContainSubstring, "lvl=info")
+					So(len(logs), ShouldBeGreaterThanOrEqualTo, 5)
+					So(logs[1], ShouldContainSubstring, "lvl=warn")
 					So(logs[1], ShouldContainSubstring, "call=ListEntries")
-					So(logs[1], ShouldContainSubstring, `previous_err="connection reset by peer"`)
+					So(logs[1], ShouldContainSubstring, `err="connection reset by peer"`)
+					So(logs[1], ShouldContainSubstring, `retries=0`)
+					lastLog := logs[len(logs)-1]
+					So(lastLog, ShouldContainSubstring, "lvl=info")
+					So(lastLog, ShouldContainSubstring, "call=ListEntries")
+					So(lastLog, ShouldContainSubstring, `previous_err="connection reset by peer"`)
 					moreRetries := false
-					if strings.Contains(logs[1], "retries=3") || strings.Contains(logs[1], "retries=4") || strings.Contains(logs[1], "retries=5") {
+					if strings.Contains(lastLog, "retries=3") || strings.Contains(lastLog, "retries=4") || strings.Contains(lastLog, "retries=5") {
 						moreRetries = true
 					}
 					So(moreRetries, ShouldBeTrue)
@@ -586,7 +594,7 @@ func TestMuxFys(t *testing.T) {
 				f, err := os.OpenFile(filepath.Join(explicitMount, "opened.file"), os.O_RDWR|os.O_CREATE, 0666)
 				So(err, ShouldBeNil)
 
-				syscall.Kill(syscall.Getpid(), syscall.SIGUNUSED)
+				syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
 				<-time.After(500 * time.Millisecond)
 
 				So(fs.mounted, ShouldBeTrue)
@@ -608,8 +616,8 @@ func TestMuxFys(t *testing.T) {
 				CacheData: false,
 				Write:     true,
 			}
-			err := fs.Mount(remoteConfig)
-			So(err, ShouldBeNil)
+			errm := fs.Mount(remoteConfig)
+			So(errm, ShouldBeNil)
 			defer fs.Unmount()
 
 			Convey("You can Unmount()", func() {
@@ -619,7 +627,7 @@ func TestMuxFys(t *testing.T) {
 
 			Convey("Creating files immediately uploads them", func() {
 				sourceFile1 := filepath.Join(sourcePoint, "created1.file")
-				_, err = os.Stat(sourceFile1)
+				_, err := os.Stat(sourceFile1)
 				So(err, ShouldNotBeNil)
 				sourceFile2 := filepath.Join(sourcePoint, "created2.file")
 				_, err = os.Stat(sourceFile2)
@@ -644,7 +652,7 @@ func TestMuxFys(t *testing.T) {
 
 			Convey("You can write data directly to the remote", func() {
 				sourceFile := filepath.Join(sourcePoint, "stream.file")
-				_, err = os.Stat(sourceFile)
+				_, err := os.Stat(sourceFile)
 				So(err, ShouldNotBeNil)
 
 				mountFile := filepath.Join(explicitMount, "stream.file")
@@ -713,8 +721,8 @@ func TestMuxFys(t *testing.T) {
 				CacheData: true,
 				Write:     true,
 			}
-			err := fs.Mount(remoteConfig)
-			So(err, ShouldBeNil)
+			errm := fs.Mount(remoteConfig)
+			So(errm, ShouldBeNil)
 			defer fs.Unmount()
 			defer os.RemoveAll(sourceSubDir)
 
@@ -732,7 +740,7 @@ func TestMuxFys(t *testing.T) {
 
 			Convey("Unmounting after creating a file uploads it", func() {
 				sourceFile1 := filepath.Join(sourceSubDir, "created1.file")
-				_, err = os.Stat(sourceFile1)
+				_, err := os.Stat(sourceFile1)
 				So(err, ShouldNotBeNil)
 
 				f, err := os.OpenFile(filepath.Join(explicitMount, "created1.file"), os.O_RDWR|os.O_CREATE, 0666)
@@ -759,8 +767,8 @@ func TestMuxFys(t *testing.T) {
 				CacheData: false,
 				Write:     true,
 			}
-			err := fs.Mount(remoteConfig)
-			So(err, ShouldBeNil)
+			errm := fs.Mount(remoteConfig)
+			So(errm, ShouldBeNil)
 			defer fs.Unmount()
 			defer os.RemoveAll(sourceSubDir)
 
@@ -777,7 +785,7 @@ func TestMuxFys(t *testing.T) {
 
 			Convey("Creating a file immediately uploads it", func() {
 				sourceFile1 := filepath.Join(sourceSubDir, "created1.file")
-				_, err = os.Stat(sourceFile1)
+				_, err := os.Stat(sourceFile1)
 				So(err, ShouldNotBeNil)
 
 				f, err := os.OpenFile(filepath.Join(explicitMount, "created1.file"), os.O_RDWR|os.O_CREATE, 0666)
@@ -935,8 +943,5 @@ func checkEmpty(dir string) bool {
 	defer f.Close()
 
 	_, err = f.Readdirnames(1)
-	if err == io.EOF {
-		return true
-	}
-	return false
+	return err == io.EOF
 }

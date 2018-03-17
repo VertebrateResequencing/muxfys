@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 //
 //  This file is part of muxfys.
@@ -22,10 +22,6 @@ package muxfys
 // etc.
 
 import (
-	"github.com/hanwen/go-fuse/fuse"
-	"github.com/inconshreveable/log15"
-	"github.com/jpillora/backoff"
-	"github.com/mitchellh/go-homedir"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -34,6 +30,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hanwen/go-fuse/fuse"
+	"github.com/inconshreveable/log15"
+	"github.com/jpillora/backoff"
+	"github.com/mitchellh/go-homedir"
 )
 
 const downRemoteWaitTime = 10 * time.Minute
@@ -96,12 +97,12 @@ type RemoteAccessor interface {
 	ListEntries(dir string) ([]RemoteAttr, error)
 
 	// OpenFile opens a remote file ready for reading.
-	OpenFile(path string) (io.ReadCloser, error)
+	OpenFile(path string, offset int64) (io.ReadCloser, error)
 
 	// Seek should take an object returned by OpenFile() (from the same
 	// RemoteAccessor implementation) and seek to the given offset from the
 	// beginning of the file.
-	Seek(rc io.ReadCloser, offset int64) error
+	Seek(path string, rc io.ReadCloser, offset int64) (io.ReadCloser, error)
 
 	// CopyFile should do a remote copy of source to dest without involving the
 	// the local file system.
@@ -111,9 +112,8 @@ type RemoteAccessor interface {
 	DeleteFile(path string) error
 
 	// DeleteIncompleteUpload is like DeleteFile, but only called after a failed
-	// Upload*() attempt. Errors are not considered in this context, since we
-	// could be asking to delete something that doesn't exist.
-	DeleteIncompleteUpload(path string)
+	// Upload*() attempt.
+	DeleteIncompleteUpload(path string) error
 
 	// ErrorIsNotExists should return true if the supplied error (retrieved from
 	// any of the above methods called on the same RemoteAccessor
@@ -160,33 +160,35 @@ type remote struct {
 }
 
 // newRemote creates a remote for use inside MuxFys.
-func newRemote(accessor RemoteAccessor, cacheData bool, cacheDir string, cacheBase string, write bool, maxAttempts int, logger log15.Logger) (r *remote, err error) {
+func newRemote(accessor RemoteAccessor, cacheData bool, cacheDir string, cacheBase string, write bool, maxAttempts int, logger log15.Logger) (*remote, error) {
 	// handle cacheData option, creating cache dir if necessary
 	if !cacheData && cacheDir != "" {
 		cacheData = true
 	}
 
 	if cacheDir != "" {
+		var err error
 		cacheDir, err = homedir.Expand(cacheDir)
 		if err != nil {
-			return
+			return nil, err
 		}
 		cacheDir, err = filepath.Abs(cacheDir)
 		if err != nil {
-			return
+			return nil, err
 		}
 		err = os.MkdirAll(cacheDir, os.FileMode(dirMode))
 		if err != nil {
-			return
+			return nil, err
 		}
 	}
 
 	cacheIsTmp := false
 	if cacheData && cacheDir == "" {
 		// decide on our own cache directory
+		var err error
 		cacheDir, err = ioutil.TempDir(cacheBase, ".muxfys_cache")
 		if err != nil {
-			return
+			return nil, err
 		}
 		cacheIsTmp = true
 	}
@@ -247,6 +249,7 @@ ATTEMPTS:
 				// multi-minute downtime
 				r.cbMutex.Lock()
 				if r.hasWorked && time.Since(start) < downRemoteWaitTime {
+					r.Warn("Connection problem, will retry", "call", clientMethod, "path", path, "retries", attempts-1, "walltime", time.Since(start), "err", err)
 					dur := r.clientBackoff.Duration()
 					r.cbMutex.Unlock()
 					<-time.After(dur)
@@ -328,11 +331,11 @@ func (r *remote) uploadFile(localPath, remotePath string) fuse.Status {
 	n, err := file.Read(buffer)
 	if err != nil && err != io.EOF {
 		r.Error("Could not read local file", "method", "uploadFile", "path", localPath, "err", err)
-		file.Close()
+		logClose(r.Logger, file, "upload file", "path", localPath)
 		return fuse.EIO
 	}
 	contentType := http.DetectContentType(buffer[:n])
-	file.Close()
+	logClose(r.Logger, file, "upload file", "path", localPath)
 
 	// upload, with automatic retries
 	rf := func() error {
@@ -340,7 +343,10 @@ func (r *remote) uploadFile(localPath, remotePath string) fuse.Status {
 	}
 	status := r.retry("UploadFile", remotePath, rf)
 	if status != fuse.OK {
-		r.accessor.DeleteIncompleteUpload(remotePath)
+		errd := r.accessor.DeleteIncompleteUpload(remotePath)
+		if errd != nil && !os.IsNotExist(errd) {
+			r.Warn("Deletion of incomplete upload failed", "err", errd)
+		}
 	}
 	return status
 }
@@ -374,12 +380,15 @@ func (r *remote) uploadData(data io.ReadCloser, remotePath string) (ready chan b
 		if status == fuse.OK {
 			finished <- true
 		} else {
-			data.Close()
+			logClose(r.Logger, data, "upload data")
 			finished <- false
-			r.accessor.DeleteIncompleteUpload(remotePath)
+			errd := r.accessor.DeleteIncompleteUpload(remotePath)
+			if errd != nil {
+				r.Warn("Deletion of incomplete upload failed", "err", errd)
+			}
 		}
 	}()
-	return
+	return ready, finished
 }
 
 // downloadFile downloads the given remote file to the given local path, with
@@ -396,53 +405,46 @@ func (r *remote) downloadFile(remotePath, localPath string) fuse.Status {
 // as the given path, but without "traversing" to deeper "sub-directories". Ie.
 // it's like a directory listing. Returns the details and fuse.OK if there were
 // no problems getting those details.
-func (r *remote) findObjects(remotePath string) (ras []RemoteAttr, status fuse.Status) {
+func (r *remote) findObjects(remotePath string) ([]RemoteAttr, fuse.Status) {
 	// find objects, with automatic retries
+	var ras []RemoteAttr
 	rf := func() error {
 		var err error
 		ras, err = r.accessor.ListEntries(remotePath)
 		return err
 	}
-	status = r.retry("ListEntries", remotePath, rf)
-	return
+	status := r.retry("ListEntries", remotePath, rf)
+	return ras, status
 }
 
 // getObject gets the object representing an opened remote file, ready to be
 // read from. Optionally also seek within it first (to the given number of bytes
 // from the start of the file).
-func (r *remote) getObject(remotePath string, offset int64) (object io.ReadCloser, status fuse.Status) {
+func (r *remote) getObject(remotePath string, offset int64) (io.ReadCloser, fuse.Status) {
 	// get object and seek, with automatic retries
+	var reader io.ReadCloser
 	rf := func() error {
 		var err error
-		object, err = r.accessor.OpenFile(remotePath)
-		if err != nil {
-			return err
-		}
-
-		if offset > 0 {
-			err = r.accessor.Seek(object, offset)
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
+		reader, err = r.accessor.OpenFile(remotePath, offset)
+		return err
 	}
-	status = r.retry("OpenFile/Seek", remotePath, rf)
-	return
+	status := r.retry("OpenFile", remotePath, rf)
+	return reader, status
 }
 
 // seek takes the object returned by getObject and seeks it to the desired
-// offset from the start of the file. If this fails a number of repeated
-// attempts will be made which involves creating a new object, which is why
-// remotePath must be supplied, and why you get back an object. This will be the
-// same object you supplied if there were no problems.
+// offset from the start of the file. This may involve creating a new object,
+// which is why remotePath must be supplied, and why you get back an object.
+// This might be the same object you supplied if there were no problems.
 func (r *remote) seek(rc io.ReadCloser, offset int64, remotePath string) (io.ReadCloser, fuse.Status) {
-	err := r.accessor.Seek(rc, offset)
-	if err != nil {
-		return r.getObject(remotePath, offset)
+	var reader io.ReadCloser
+	rf := func() error {
+		var err error
+		reader, err = r.accessor.Seek(remotePath, rc, offset)
+		return err
 	}
-	return rc, fuse.OK
+	status := r.retry("Seek", remotePath, rf)
+	return reader, status
 }
 
 // copyFile remotely copies a file to a new remote path. oldPath is treated

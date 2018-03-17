@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 // The StatFs() code in this file is based on code in
 // https://github.com/kahing/goofys Copyright 2015-2017 Ka-Hing Cheung,
@@ -27,16 +27,17 @@ package muxfys
 
 import (
 	"bufio"
-	"github.com/alexflint/go-filemutex"
-	"github.com/hanwen/go-fuse/fuse"
-	"github.com/hanwen/go-fuse/fuse/nodefs"
-	"github.com/hanwen/go-fuse/fuse/pathfs"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/alexflint/go-filemutex"
+	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/fuse/nodefs"
+	"github.com/hanwen/go-fuse/fuse/pathfs"
 )
 
 const (
@@ -49,21 +50,21 @@ const (
 // fileDetails checks the file is known and returns its attributes and the
 // remote the file came from. If not known, returns ENOENT (which should never
 // happen).
-func (fs *MuxFys) fileDetails(name string, shouldBeWritable bool) (attr *fuse.Attr, r *remote, status fuse.Status) {
+func (fs *MuxFys) fileDetails(name string, shouldBeWritable bool) (*fuse.Attr, *remote, fuse.Status) {
 	fs.mapMutex.RLock()
 	defer fs.mapMutex.RUnlock()
 	attr, exists := fs.files[name]
 	if !exists {
 		return nil, nil, fuse.ENOENT
 	}
-	r = fs.fileToRemote[name]
-	status = fuse.OK
 
+	r := fs.fileToRemote[name]
+	status := fuse.OK
 	if shouldBeWritable && !r.write {
 		status = fuse.EPERM
 	}
 
-	return
+	return attr, r, status
 }
 
 // StatFs returns a constant (faked) set of details describing a very large
@@ -95,20 +96,16 @@ func (fs *MuxFys) OnMount(nodeFs *pathfs.PathNodeFs) {
 
 // GetAttr finds out about a given object, returning information from a
 // permanent cache if possible. context is not currently used.
-func (fs *MuxFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, status fuse.Status) {
+func (fs *MuxFys) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
 	fs.mapMutex.Lock()
 	defer fs.mapMutex.Unlock()
 
 	if _, isDir := fs.dirs[name]; isDir {
-		attr = fs.dirAttr
-		status = fuse.OK
-		return
+		return fs.dirAttr, fuse.OK
 	}
 
-	var cached bool
-	if attr, cached = fs.files[name]; cached {
-		status = fuse.OK
-		return
+	if attr, cached := fs.files[name]; cached {
+		return attr, fuse.OK
 	}
 
 	// rather than call StatObject on name to see if its a file, it's more
@@ -123,19 +120,19 @@ func (fs *MuxFys) GetAttr(name string, context *fuse.Context) (attr *fuse.Attr, 
 		// part of OpenDir()
 		if remotes, exists := fs.dirs[parent]; exists {
 			for _, r := range remotes {
-				fs.openDir(r, parent)
+				status := fs.openDir(r, parent)
+				if status != fuse.OK {
+					fs.Warn("GetAttr openDir failed", "path", parent, "status", status)
+				}
 			}
 		}
 
 		if _, isDir := fs.dirs[name]; isDir {
-			attr = fs.dirAttr
-			status = fuse.OK
-			return
+			return fs.dirAttr, fuse.OK
 		}
 
-		if attr, cached = fs.files[name]; cached {
-			status = fuse.OK
-			return
+		if attr, cached := fs.files[name]; cached {
+			return attr, fuse.OK
 		}
 	}
 	return nil, fuse.ENOENT
@@ -161,7 +158,10 @@ func (fs *MuxFys) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, 
 	// openDir in all remotes that have this dir, then return the combined dir
 	// contents from the cache
 	for _, r := range remotes {
-		fs.openDir(r, name)
+		status := fs.openDir(r, name)
+		if status != fuse.OK {
+			fs.Warn("GetAttr openDir failed", "path", name, "status", status)
+		}
 	}
 
 	entries, cached = fs.dirContents[name]
@@ -174,7 +174,7 @@ func (fs *MuxFys) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, 
 // openDir gets the contents of the given name, treating it as a directory,
 // caching the attributes of its contents. Must be called while you have the
 // mapMutex Locked.
-func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
+func (fs *MuxFys) openDir(r *remote, name string) fuse.Status {
 	remotePath := r.getRemotePath(name)
 	if remotePath != "" {
 		remotePath += "/"
@@ -187,11 +187,11 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 			// allow the root to be a non-existent directory
 			fs.dirs[name] = append(fs.dirs[name], r)
 			fs.dirContents[name] = []fuse.DirEntry{}
-			status = fuse.OK
+			return fuse.OK
 		} else if status == fuse.OK {
-			status = fuse.ENOENT
+			return fuse.ENOENT
 		}
-		return
+		return status
 	}
 
 	var isDir bool
@@ -233,19 +233,17 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 		// cache all the dir contents; this does mean we'll never see externally
 		// added new entries for this dir in the future
 	}
-	status = fuse.OK
 
-	if isDir {
-		fs.dirs[name] = append(fs.dirs[name], r)
-		if _, exists := fs.dirContents[name]; !exists {
-			// empty dir, we must create an entry in this map
-			fs.dirContents[name] = []fuse.DirEntry{}
-		}
-	} else {
-		status = fuse.ENOENT
+	if !isDir {
+		return fuse.ENOENT
 	}
 
-	return
+	fs.dirs[name] = append(fs.dirs[name], r)
+	if _, exists := fs.dirContents[name]; !exists {
+		// empty dir, we must create an entry in this map
+		fs.dirContents[name] = []fuse.DirEntry{}
+	}
+	return fuse.OK
 }
 
 // Open is what is called when any request to read a file is made. The file must
@@ -253,27 +251,28 @@ func (fs *MuxFys) openDir(r *remote, name string) (status fuse.Status) {
 // doesn't exist. context is not currently used. If CacheData has been
 // configured, we defer to openCached(). Otherwise the real implementation is in
 // remoteFile.
-func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (file nodefs.File, status fuse.Status) {
+func (fs *MuxFys) Open(name string, flags uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
 	checkWritable := false
 	if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {
 		checkWritable = true
 	}
 	attr, r, status := fs.fileDetails(name, checkWritable)
+	var file nodefs.File
 	if status != fuse.OK {
-		return
+		return file, status
 	}
 
 	if r.cacheData {
 		file, status = fs.openCached(r, name, flags, context, attr, checkWritable)
 	} else {
-		file = newRemoteFile(r, r.getRemotePath(name), attr, false)
+		file = newRemoteFile(r, r.getRemotePath(name), attr, false, fs.Logger)
 	}
 
 	if !r.write || (int(flags)&os.O_WRONLY == 0 && int(flags)&os.O_RDWR == 0) {
 		file = nodefs.NewReadOnlyFile(file)
 	}
 
-	return
+	return file, status
 }
 
 // openCached defers all subsequent read/write operations to a CachedFile for
@@ -286,18 +285,27 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 	if err != nil {
 		return nil, fuse.EIO
 	}
-	fmutex.Lock()
+	err = fmutex.Lock()
+	if err != nil {
+		fs.Error("openCached file mutex lock failed", "err", err)
+	}
 
 	localStats, err := os.Stat(localPath)
 	var create bool
 	if err != nil {
-		os.Remove(localPath)
+		err = os.Remove(localPath)
+		if err != nil && !os.IsNotExist(err) {
+			fs.Warn("openCached remove cache file failed", "path", localPath, "err", err)
+		}
 		create = true
 	} else if !writeMode {
 		// check the file is the right size
 		if localStats.Size() != int64(attr.Size) {
 			r.Warn("Cached size differs", "path", name, "localSize", localStats.Size(), "remoteSize", attr.Size)
-			os.Remove(localPath)
+			err = os.Remove(localPath)
+			if err != nil {
+				fs.Warn("openCached remove cache file failed", "path", localPath, "err", err)
+			}
 			create = true
 			if int(flags)&os.O_WRONLY != 0 || int(flags)&os.O_RDWR != 0 || int(flags)&os.O_APPEND != 0 || int(flags)&os.O_CREATE != 0 || int(flags)&os.O_TRUNC != 0 {
 				attr.Size = uint64(0)
@@ -329,37 +337,45 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 			// and could be in use simultaneously by other muxfys mounts
 			// *** alternatively we could store Invervals in the lock file...
 			if status := r.downloadFile(remotePath, localPath); status != fuse.OK {
-				fmutex.Close()
+				logClose(fs.Logger, fmutex, "openCached file mutex")
 				return nil, status
 			}
 
 			// check size ok
-			localStats, err := os.Stat(localPath)
-			if err != nil {
-				r.Error("Downloaded file could not be accessed", "path", localPath, "err", err)
-				os.Remove(localPath)
-				fmutex.Close()
-				return nil, fuse.ToStatus(err)
+			localStats, errs := os.Stat(localPath)
+			if errs != nil {
+				r.Error("Downloaded file could not be accessed", "path", localPath, "err", errs)
+				errr := os.Remove(localPath)
+				if errr != nil {
+					fs.Warn("openCached remove cache file failed", "path", localPath, "err", errr)
+				}
+				logClose(fs.Logger, fmutex, "openCached file mutex")
+				return nil, fuse.ToStatus(errs)
 			} else if localStats.Size() != int64(attr.Size) {
-				os.Remove(localPath)
 				r.Error("Downloaded size is wrong", "path", remotePath, "localSize", localStats.Size(), "remoteSize", attr.Size)
-				fmutex.Close()
+				errr := os.Remove(localPath)
+				if errr != nil {
+					fs.Warn("openCached remove cache file failed", "path", localPath, "err", errr)
+				}
+				logClose(fs.Logger, fmutex, "openCached file mutex")
 				return nil, fuse.EIO
 			}
 			r.CacheOverride(localPath, NewInterval(0, int64(attr.Size)))
 		} else {
 			// this is our first time opening this remote file, create a sparse
 			// file that Read() operations will cache in to
-			f, err := os.Create(localPath)
-			if err != nil {
-				fmutex.Close()
-				return nil, fuse.ToStatus(err)
+			f, errc := os.Create(localPath)
+			if errc != nil {
+				fs.Error("openCached create cached file failed", "path", localPath, "err", errc)
+				logClose(fs.Logger, fmutex, "openCached file mutex")
+				return nil, fuse.ToStatus(errc)
 			}
-			if err := f.Truncate(int64(attr.Size)); err != nil {
-				fmutex.Close()
-				return nil, fuse.ToStatus(err)
+			if errt := f.Truncate(int64(attr.Size)); errt != nil {
+				fs.Error("openCached truncate failed", "path", localPath, "err", errt)
+				logClose(fs.Logger, fmutex, "openCached file mutex")
+				return nil, fuse.ToStatus(errt)
 			}
-			f.Close()
+			logClose(fs.Logger, f, "openCached created file", "path", localPath)
 		}
 	} else if r.cacheIsTmp && int(flags)&os.O_APPEND != 0 {
 		// cache everything in the file we haven't already read by reading the
@@ -367,19 +383,28 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 		iv := Interval{0, int64(attr.Size)}
 		unread := r.Uncached(localPath, iv)
 		if len(unread) > 0 {
-			fmutex.Unlock()
+			err = fmutex.Unlock()
+			if err != nil {
+				fs.Error("openCached file mutex unlock failed", "err", err)
+			}
 			path := filepath.Join(fs.mountPoint, name)
 			reader, err := os.Open(path)
 			if err != nil {
 				r.Error("Could not open cached file", "path", path, "err", err)
-				fmutex.Lock()
-				fmutex.Close()
-				return nil, fuse.EIO
+				errl := fmutex.Lock()
+				if errl != nil {
+					fs.Error("openCached file mutex lock failed", "err", errl)
+				}
+				logClose(fs.Logger, fmutex, "openCached file mutex")
+				return nil, fuse.ToStatus(err)
 			}
 			for _, uiv := range unread {
-				reader.Seek(uiv.Start, io.SeekStart)
+				_, errs := reader.Seek(uiv.Start, io.SeekStart)
+				if errs != nil {
+					r.Error("openCached reader seek failed", "err", errs)
+				}
 				br := bufio.NewReader(reader)
-				b := make([]byte, 1000, 1000)
+				b := make([]byte, 1000)
 				var read int64
 				for read <= uiv.Length() {
 					done, rerr := br.Read(b)
@@ -393,14 +418,20 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 				}
 				if err != nil {
 					r.Error("Could not read file", "path", name, "err", err)
-					reader.Close()
-					fmutex.Lock()
-					fmutex.Close()
+					logClose(fs.Logger, reader, "openCached reader", "path", name)
+					err = fmutex.Lock()
+					if err != nil {
+						fs.Error("openCached file mutex lock failed", "err", err)
+					}
+					logClose(fs.Logger, fmutex, "openCached file mutex")
 					return nil, fuse.EIO
 				}
 			}
-			reader.Close()
-			fmutex.Lock()
+			logClose(fs.Logger, reader, "openCached reader", "path", name)
+			err = fmutex.Lock()
+			if err != nil {
+				fs.Error("openCached file mutex lock failed", "err", err)
+			}
 		}
 	}
 
@@ -410,7 +441,7 @@ func (fs *MuxFys) openCached(r *remote, name string, flags uint32, context *fuse
 		return fs.create(name, flags, uint32(fileMode), fmutex)
 	}
 
-	fmutex.Close()
+	logClose(fs.Logger, fmutex, "openCached file mutex")
 	return newCachedFile(r, remotePath, localPath, attr, flags, fs.Logger), fuse.OK
 }
 
@@ -453,8 +484,11 @@ func (fs *MuxFys) Symlink(source string, dest string, context *fuse.Context) (st
 	if err != nil {
 		return fuse.EIO
 	}
-	fmutex.Lock()
-	defer fmutex.Close()
+	err = fmutex.Lock()
+	if err != nil {
+		fs.Error("Symlink file mutex lock failed", "err", err)
+	}
+	defer logClose(fs.Logger, fmutex, "Symlink file mutex")
 
 	// symlink from mount point source to cached dest file
 	err = os.Symlink(source, localPathDest)
@@ -483,14 +517,17 @@ func (fs *MuxFys) Symlink(source string, dest string, context *fuse.Context) (st
 
 // Readlink returns the destination of a symbolic link that was created with
 // Symlink(). context is not currently used.
-func (fs *MuxFys) Readlink(name string, context *fuse.Context) (out string, status fuse.Status) {
+func (fs *MuxFys) Readlink(name string, context *fuse.Context) (string, fuse.Status) {
 	_, r, status := fs.fileDetails(name, true)
 	if status != fuse.OK {
-		return
+		return "", status
 	}
-	out, err := os.Readlink(r.getLocalPath(r.getRemotePath(name)))
-	status = fuse.ToStatus(err)
-	return
+	localPath := r.getLocalPath(r.getRemotePath(name))
+	out, err := os.Readlink(localPath)
+	if err != nil {
+		fs.Warn("Readlink failed", "path", localPath, "err", err)
+	}
+	return out, fuse.ToStatus(err)
 }
 
 // SetXAttr is ignored.
@@ -523,7 +560,7 @@ func (fs *MuxFys) RemoveXAttr(name string, attr string, context *fuse.Context) f
 // in the cache; otherwise ignored. This only gets called by direct operations
 // like os.Chtimes() (that don't first Open()/Create() the file). context is not
 // currently used.
-func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) (status fuse.Status) {
+func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) fuse.Status {
 	attr, r, status := fs.fileDetails(name, true)
 	if status == fuse.ENOENT {
 		fs.mapMutex.RLock()
@@ -533,7 +570,7 @@ func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, conte
 		}
 	}
 	if status != fuse.OK || !r.cacheData {
-		return
+		return status
 	}
 
 	localPath := r.getLocalPath(r.getRemotePath(name))
@@ -546,7 +583,7 @@ func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, conte
 		status = fuse.ToStatus(err)
 	}
 
-	return
+	return status
 }
 
 // Truncate truncates any local cached copy of the file. Only currently
@@ -571,13 +608,18 @@ func (fs *MuxFys) Truncate(name string, offset uint64, context *fuse.Context) fu
 		if err != nil {
 			return fuse.EIO
 		}
-		fmutex.Lock()
-		defer fmutex.Close()
+		err = fmutex.Lock()
+		if err != nil {
+			fs.Error("Truncate file mutex lock failed", "err", err)
+			return fuse.EIO
+		}
+		defer logClose(fs.Logger, fmutex, "Trucate mutex file")
 
 		if _, err := os.Stat(localPath); err == nil {
 			// truncate local cached copy
 			err = os.Truncate(localPath, int64(offset))
 			if err != nil {
+				fs.Error("Truncate cached file failed", "path", localPath, "err", err)
 				return fuse.ToStatus(err)
 			}
 			r.CacheTruncate(localPath, int64(offset))
@@ -590,7 +632,7 @@ func (fs *MuxFys) Truncate(name string, offset uint64, context *fuse.Context) fu
 			}
 
 			if offset == 0 {
-				localFile.Close()
+				logClose(fs.Logger, localFile, "Trucate local file")
 				r.CacheTruncate(localPath, int64(offset))
 			} else {
 				// download offset bytes of remote file
@@ -600,21 +642,22 @@ func (fs *MuxFys) Truncate(name string, offset uint64, context *fuse.Context) fu
 				}
 
 				written, err := io.CopyN(localFile, object, int64(offset))
-				if err != nil {
-					r.Error("Could not copy bytes", "size", offset, "source", remotePath, "dest", localPath, "err", err)
-					localFile.Close()
-					syscall.Unlink(localPath)
-					return fuse.EIO
-				}
-				if written != int64(offset) {
-					r.Error("Could not copy all bytes", "size", offset, "source", remotePath, "dest", localPath, "err", err)
-					localFile.Close()
-					syscall.Unlink(localPath)
+				if err != nil || written != int64(offset) {
+					msg := "Could not copy bytes"
+					if err == nil {
+						msg = "Could not copy all bytes"
+					}
+					r.Error(msg, "size", offset, "source", remotePath, "dest", localPath, "err", err)
+					logClose(fs.Logger, localFile, "Trucate local file")
+					erru := syscall.Unlink(localPath)
+					if erru != nil {
+						fs.Error("Truncate cache file unlink failed", "err", erru)
+					}
 					return fuse.EIO
 				}
 
-				localFile.Close()
-				object.Close()
+				logClose(fs.Logger, localFile, "Trucate local file")
+				logClose(fs.Logger, object, "Trucate remote object")
 
 				r.CacheOverride(localPath, NewInterval(0, int64(offset)))
 			}
@@ -669,6 +712,7 @@ func (fs *MuxFys) Mkdir(name string, mode uint32, context *fuse.Context) fuse.St
 			err = os.Mkdir(localPath, os.FileMode(dirMode))
 		}
 		if err != nil {
+			fs.Error("Mkdir failed", "path", localPath, "err", err)
 			fs.mapMutex.Unlock()
 			return fuse.ToStatus(err)
 		}
@@ -706,8 +750,10 @@ func (fs *MuxFys) Rmdir(name string, context *fuse.Context) fuse.Status {
 	remotePath := fs.writeRemote.getRemotePath(name)
 	var err error
 	if fs.writeRemote.cacheData {
-		err = syscall.Rmdir(fs.writeRemote.getLocalPath(remotePath))
+		localPath := fs.writeRemote.getLocalPath(remotePath)
+		err = syscall.Rmdir(localPath)
 		if err != nil {
+			fs.Error("Rmdir failed", "path", localPath, "err", err)
 			return fuse.ToStatus(err)
 		}
 
@@ -778,6 +824,7 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 					fs.addNewEntryToItsDir(newPath, fuse.S_IFDIR)
 				}
 			}
+			fs.Error("Rename mkdir failed", "path", localPathNew, "err", err)
 			return fuse.ToStatus(err)
 		}
 	} else {
@@ -795,17 +842,28 @@ func (fs *MuxFys) Rename(oldPath string, newPath string, context *fuse.Context) 
 			if err != nil {
 				return fuse.EIO
 			}
-			fmutex.Lock()
-			defer fmutex.Close()
+			err = fmutex.Lock()
+			if err != nil {
+				fs.Error("Rename file mutex lock failed", "path", localPathOld, "err", err)
+				return fuse.EIO
+			}
+			defer logClose(fs.Logger, fmutex, "Rename file mutex")
 			fmutex2, err := fs.getFileMutex(localPathNew)
 			if err != nil {
 				return fuse.EIO
 			}
-			fmutex2.Lock()
-			defer fmutex2.Close()
+			err = fmutex2.Lock()
+			if err != nil {
+				fs.Error("Rename file mutex lock failed", "path", localPathNew, "err", err)
+				return fuse.EIO
+			}
+			defer logClose(fs.Logger, fmutex2, "Rename file mutex")
 
 			// if we've cached oldPath, move to new cached file
-			os.Rename(localPathOld, localPathNew)
+			err = os.Rename(localPathOld, localPathNew)
+			if err != nil {
+				fs.Error("Rename of cached files failed", "source", localPathOld, "dest", localPathNew, "err", err)
+			}
 			fs.writeRemote.CacheRename(localPathOld, localPathNew)
 		}
 
@@ -847,7 +905,10 @@ func (fs *MuxFys) Unlink(name string, context *fuse.Context) fuse.Status {
 		// *** we could file lock here, but that is a little wasteful if
 		// localPath doesn't actually exist, and we'd have to file unlock eg.
 		// Rename() and anything else that calls us
-		syscall.Unlink(localPath)
+		err := syscall.Unlink(localPath)
+		if err != nil {
+			fs.Warn("Unlink failed", "path", localPath, "err", err)
+		}
 		r.CacheDelete(localPath)
 	}
 
@@ -894,14 +955,18 @@ func (fs *MuxFys) create(name string, flags uint32, mode uint32, fmutex ...*file
 		localPath = r.getLocalPath(remotePath)
 
 		if len(fmutex) == 1 {
-			defer fmutex[0].Close()
+			defer logClose(fs.Logger, fmutex[0], "file mutex", "path", localPath)
 		} else {
 			fm, err := fs.getFileMutex(localPath)
 			if err != nil {
 				return nil, fuse.EIO
 			}
-			fm.Lock()
-			defer fm.Close()
+			err = fm.Lock()
+			if err != nil {
+				fs.Error("file mutex lock failed", "path", localPath, "err", err)
+				return nil, fuse.EIO
+			}
+			defer logClose(fs.Logger, fm, "file mutex", "path", localPath)
 		}
 	}
 
@@ -941,7 +1006,7 @@ func (fs *MuxFys) create(name string, flags uint32, mode uint32, fmutex ...*file
 	if r.cacheData {
 		return newCachedFile(r, remotePath, localPath, attr, uint32(int(flags)|os.O_CREATE), fs.Logger), fuse.OK
 	}
-	return newRemoteFile(r, remotePath, attr, true), fuse.OK
+	return newRemoteFile(r, remotePath, attr, true, fs.Logger), fuse.OK
 }
 
 // addNewEntryToItsDir adds a DirEntry for the file/dir named name to that
@@ -962,7 +1027,10 @@ func (fs *MuxFys) addNewEntryToItsDir(name string, mode int) {
 		// part of OpenDir()
 		if remotes, exists := fs.dirs[parent]; exists {
 			for _, r := range remotes {
-				fs.openDir(r, parent)
+				status := fs.openDir(r, parent)
+				if status != fuse.OK {
+					fs.Warn("addNewEntryToItsDir openDir failed", "path", parent, "status", status)
+				}
 			}
 		}
 	}
@@ -996,18 +1064,18 @@ func (fs *MuxFys) rmEntryFromItsDir(name string) {
 // getFileMutex prepares a lock file for the given local path (in that path's
 // directory, creating the directory first if necessary), and returns a mutex
 // that you should Lock() and Close().
-func (fs *MuxFys) getFileMutex(localPath string) (mutex *filemutex.FileMutex, err error) {
+func (fs *MuxFys) getFileMutex(localPath string) (*filemutex.FileMutex, error) {
 	parent := filepath.Dir(localPath)
-	if _, serr := os.Stat(parent); serr != nil && os.IsNotExist(serr) {
+	if _, err := os.Stat(parent); err != nil && os.IsNotExist(err) {
 		err = os.MkdirAll(parent, dirMode)
 		if err != nil {
 			fs.Error("Could not create parent directory", "path", localPath, "err", err)
-			return
+			return nil, err
 		}
 	}
-	mutex, err = filemutex.New(filepath.Join(parent, ".muxfys_lock."+filepath.Base(localPath)))
+	mutex, err := filemutex.New(filepath.Join(parent, ".muxfys_lock."+filepath.Base(localPath)))
 	if err != nil {
 		fs.Error("Could not create lock file", "path", localPath, "err", err)
 	}
-	return
+	return mutex, err
 }

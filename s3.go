@@ -1,4 +1,4 @@
-// Copyright © 2017 Genome Research Limited
+// Copyright © 2017, 2018 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 // The target parsing code in this file is based on code in
 // https://github.com/minio/minfs Copyright 2016 Minio, Inc.
@@ -29,15 +29,16 @@ package muxfys
 import (
 	"bufio"
 	"fmt"
-	"github.com/go-ini/ini"
-	"github.com/minio/minio-go"
-	"github.com/mitchellh/go-homedir"
 	"io"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/go-ini/ini"
+	"github.com/minio/minio-go"
+	"github.com/mitchellh/go-homedir"
 )
 
 const (
@@ -95,7 +96,7 @@ type S3Config struct {
 // accessed. Because reading from a public s3.amazonaws.com bucket requires no
 // credentials, no error is raised on failure to find any values in the
 // environment when profile is supplied as an empty string.
-func S3ConfigFromEnvironment(profile, path string) (c *S3Config, err error) {
+func S3ConfigFromEnvironment(profile, path string) (*S3Config, error) {
 	if path == "" {
 		return nil, fmt.Errorf("S3ConfigFromEnvironment requires a path")
 	}
@@ -112,23 +113,23 @@ func S3ConfigFromEnvironment(profile, path string) (c *S3Config, err error) {
 
 	s3cfg, err := homedir.Expand("~/.s3cfg")
 	if err != nil {
-		return
+		return nil, err
 	}
 	ascf, err := homedir.Expand(os.Getenv("AWS_SHARED_CREDENTIALS_FILE"))
 	if err != nil {
-		return
+		return nil, err
 	}
 	acred, err := homedir.Expand("~/.aws/credentials")
 	if err != nil {
-		return
+		return nil, err
 	}
 	aconf, err := homedir.Expand(os.Getenv("AWS_CONFIG_FILE"))
 	if err != nil {
-		return
+		return nil, err
 	}
 	acon, err := homedir.Expand("~/.aws/config")
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	aws, err := ini.LooseLoad(s3cfg, ascf, acred, aconf, acon)
@@ -154,10 +155,12 @@ func S3ConfigFromEnvironment(profile, path string) (c *S3Config, err error) {
 		var awsSec string
 		awsSec, err = homedir.Expand("~/.awssecret")
 		if err != nil {
-			return
+			return nil, err
 		}
-		if file, err := os.Open(awsSec); err == nil {
-			defer file.Close()
+		if file, erro := os.Open(awsSec); erro == nil {
+			defer func() {
+				err = file.Close()
+			}()
 
 			scanner := bufio.NewScanner(file)
 			if scanner.Scan() {
@@ -199,13 +202,12 @@ func S3ConfigFromEnvironment(profile, path string) (c *S3Config, err error) {
 		region = os.Getenv("AWS_DEFAULT_REGION")
 	}
 
-	c = &S3Config{
+	return &S3Config{
 		Target:    u.String(),
 		Region:    region,
 		AccessKey: key,
 		SecretKey: secret,
-	}
-	return
+	}, err
 }
 
 // S3Accessor implements the RemoteAccessor interface by embedding minio-go.
@@ -219,7 +221,7 @@ type S3Accessor struct {
 
 // NewS3Accessor creates an S3Accessor for interacting with S3-like object
 // stores.
-func NewS3Accessor(config *S3Config) (a *S3Accessor, err error) {
+func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 	// parse the target to get secure, host, bucket and basePath
 	if config.Target == "" {
 		return nil, fmt.Errorf("no Target defined")
@@ -227,7 +229,7 @@ func NewS3Accessor(config *S3Config) (a *S3Accessor, err error) {
 
 	u, err := url.Parse(config.Target)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	var secure bool
@@ -251,7 +253,7 @@ func NewS3Accessor(config *S3Config) (a *S3Accessor, err error) {
 		return nil, fmt.Errorf("no bucket could be determined from [%s]", config.Target)
 	}
 
-	a = &S3Accessor{
+	a := &S3Accessor{
 		target:   config.Target,
 		bucket:   bucket,
 		host:     host,
@@ -268,7 +270,7 @@ func NewS3Accessor(config *S3Config) (a *S3Accessor, err error) {
 		// minio-go or ceph gets bugfixed to avoid this...
 		a.client, err = minio.NewV2(host, config.AccessKey, config.SecretKey, secure)
 	}
-	return
+	return a, err
 }
 
 // DownloadFile implements RemoteAccessor by deferring to minio.
@@ -290,15 +292,14 @@ func (a *S3Accessor) UploadData(data io.Reader, dest string) error {
 }
 
 // ListEntries implements RemoteAccessor by deferring to minio.
-func (a *S3Accessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
+func (a *S3Accessor) ListEntries(dir string) ([]RemoteAttr, error) {
 	doneCh := make(chan struct{})
 	oiCh := a.client.ListObjectsV2(a.bucket, dir, false, doneCh)
+	var ras []RemoteAttr
 	for oi := range oiCh {
 		if oi.Err != nil {
 			close(doneCh)
-			ras = nil
-			err = oi.Err
-			return
+			return nil, oi.Err
 		}
 		ras = append(ras, RemoteAttr{
 			Name:  oi.Key,
@@ -307,19 +308,37 @@ func (a *S3Accessor) ListEntries(dir string) (ras []RemoteAttr, err error) {
 			MD5:   oi.ETag,
 		})
 	}
-	return
+	return ras, nil
 }
 
 // OpenFile implements RemoteAccessor by deferring to minio.
-func (a *S3Accessor) OpenFile(path string) (io.ReadCloser, error) {
-	return a.client.GetObject(a.bucket, path, minio.GetObjectOptions{})
+func (a *S3Accessor) OpenFile(path string, offset int64) (io.ReadCloser, error) {
+	opts := minio.GetObjectOptions{}
+	if offset > 0 {
+		err := opts.SetRange(offset, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+	core := minio.Core{Client: a.client}
+	reader, _, err := core.GetObject(a.bucket, path, opts)
+	return reader, err
 }
 
 // Seek implements RemoteAccessor by deferring to minio.
-func (a *S3Accessor) Seek(rc io.ReadCloser, offset int64) error {
-	object := rc.(*minio.Object)
-	_, err := object.Seek(offset, io.SeekStart)
-	return err
+func (a *S3Accessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadCloser, error) {
+	err := rc.Close()
+	if err != nil {
+		return nil, err
+	}
+	opts := minio.GetObjectOptions{}
+	err = opts.SetRange(offset, 0)
+	if err != nil {
+		return nil, err
+	}
+	core := minio.Core{Client: a.client}
+	reader, _, err := core.GetObject(a.bucket, path, opts)
+	return reader, err
 }
 
 // CopyFile implements RemoteAccessor by deferring to minio.
@@ -334,8 +353,8 @@ func (a *S3Accessor) DeleteFile(path string) error {
 }
 
 // DeleteIncompleteUpload implements RemoteAccessor by deferring to minio.
-func (a *S3Accessor) DeleteIncompleteUpload(path string) {
-	a.client.RemoveIncompleteUpload(a.bucket, path)
+func (a *S3Accessor) DeleteIncompleteUpload(path string) error {
+	return a.client.RemoveIncompleteUpload(a.bucket, path)
 }
 
 // ErrorIsNotExists implements RemoteAccessor by looking for the NoSuchKey error
