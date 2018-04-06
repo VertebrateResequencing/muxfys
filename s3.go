@@ -294,7 +294,7 @@ func (a *S3Accessor) UploadData(data io.Reader, dest string) error {
 // ListEntries implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) ListEntries(dir string) ([]RemoteAttr, error) {
 	doneCh := make(chan struct{})
-	oiCh := a.client.ListObjectsV2(a.bucket, dir, false, doneCh)
+	oiCh := a.client.ListObjects(a.bucket, dir, false, doneCh)
 	var ras []RemoteAttr
 	for oi := range oiCh {
 		if oi.Err != nil {
