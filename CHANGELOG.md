@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [3.0.1] - 2018-04-06
+### Fixed
+- Can list directory contents with >1000 entries.
+
+
 ## [3.0.0] - 2018-03-17
 ### Changed
 - Backwards incompatible API changes: RemoteAccessor DeleteIncompleteUpload now
