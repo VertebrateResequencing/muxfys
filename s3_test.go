@@ -256,7 +256,6 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 	}
 
 	bigFileEntry := fmt.Sprintf("big.file:file:%d", bigFileSize)
-
 	Convey("You can configure S3 from the environment", t, func() {
 		envConfig, err := S3ConfigFromEnvironment("", "mybucket/subdir")
 		So(err, ShouldBeNil)
@@ -1903,7 +1902,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			st := time.Since(t)
 
 			// should have completed in under 90% of the time
-			et := time.Duration((wt.Nanoseconds()/100)*90) * time.Nanosecond
+			et := time.Duration((wt.Nanoseconds()/100)*99) * time.Nanosecond
 			So(st, ShouldBeLessThan, et)
 
 			// remount to clear the cache
@@ -2939,6 +2938,88 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			bytes, err = ioutil.ReadFile(path)
 			So(err, ShouldBeNil)
 			So(bytes, ShouldResemble, b)
+		})
+
+		Convey("You can mount a non-empty dir for reading and a non-existant dir for writing", func() {
+			remoteConfig := &RemoteConfig{
+				Accessor:  accessor,
+				CacheData: false,
+				Write:     true,
+			}
+
+			manualConfig2 := &S3Config{
+				Target:    target,
+				AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
+				SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			}
+			accessor, errn = NewS3Accessor(manualConfig2)
+			So(errn, ShouldBeNil)
+			remoteConfig2 := &RemoteConfig{
+				Accessor:  accessor,
+				CacheData: false,
+			}
+
+			fs, err := New(cfg)
+			So(err, ShouldBeNil)
+
+			err = fs.Mount(remoteConfig2, remoteConfig)
+			defer func() {
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+			}()
+			So(err, ShouldBeNil)
+
+			entries, err := ioutil.ReadDir(mountPoint)
+			So(err, ShouldBeNil)
+			So(len(entries), ShouldEqual, 5)
+
+			details := dirDetails(entries)
+			rootEntries := []string{"100k.lines:file:700000", bigFileEntry, "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir"}
+			So(details, ShouldResemble, rootEntries)
+
+			Convey("Reads and writes work", func() {
+				source := mountPoint + "/numalphanum.txt"
+				dest := mountPoint + "/write.test"
+				err := exec.Command("cp", source, dest).Run()
+				So(err, ShouldBeNil)
+
+				defer func() {
+					err = os.Remove(dest)
+					So(err, ShouldBeNil)
+				}()
+
+				// you can immediately read it back
+				bytes, err := ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				b := []byte("1234567890abcdefghijklmnopqrstuvwxyz1234567890\n")
+				So(bytes, ShouldResemble, b)
+
+				// and it's statable and listable
+				_, err = os.Stat(dest)
+				So(err, ShouldBeNil)
+
+				entries, err = ioutil.ReadDir(mountPoint)
+				So(err, ShouldBeNil)
+				details := dirDetails(entries)
+				rootEntries := []string{"100k.lines:file:700000", bigFileEntry, "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir", "write.test:file:47"}
+				So(details, ShouldResemble, rootEntries)
+
+				err = fs.Unmount()
+				So(err, ShouldBeNil)
+
+				_, err = os.Stat(dest)
+				So(err, ShouldNotBeNil)
+				So(os.IsNotExist(err), ShouldBeTrue)
+
+				// remounting lets us read the file again - it actually got
+				// uploaded
+				err = fs.Mount(remoteConfig2, remoteConfig)
+				So(err, ShouldBeNil)
+
+				bytes, err = ioutil.ReadFile(dest)
+				So(err, ShouldBeNil)
+				So(bytes, ShouldResemble, b)
+			})
 		})
 	})
 

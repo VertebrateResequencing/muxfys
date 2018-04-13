@@ -186,7 +186,9 @@ func (fs *MuxFys) openDir(r *remote, name string) fuse.Status {
 		if name == "" {
 			// allow the root to be a non-existent directory
 			fs.dirs[name] = append(fs.dirs[name], r)
-			fs.dirContents[name] = []fuse.DirEntry{}
+			if _, exists := fs.dirContents[name]; !exists {
+				fs.dirContents[name] = []fuse.DirEntry{}
+			}
 			return fuse.OK
 		} else if status == fuse.OK {
 			return fuse.ENOENT
