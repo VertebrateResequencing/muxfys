@@ -2940,7 +2940,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			So(bytes, ShouldResemble, b)
 		})
 
-		Convey("You can mount a non-empty dir for reading and a non-existant dir for writing", func() {
+		Convey("You can mount a non-empty dir for reading and a non-existent dir for writing", func() {
 			remoteConfig := &RemoteConfig{
 				Accessor:  accessor,
 				CacheData: false,

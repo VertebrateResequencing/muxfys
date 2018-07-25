@@ -44,6 +44,7 @@ type remoteFile struct {
 	attr          *fuse.Attr
 	readOffset    int64
 	readWorked    bool
+	readRetries   int
 	reader        io.ReadCloser
 	rpipe         *io.PipeReader
 	wpipe         *io.PipeWriter
@@ -185,7 +186,7 @@ func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 			status = fuse.OK
 		} else {
 			f.Error("fillBuffer read failed", "err", err)
-			if f.readWorked && strings.Contains(err.Error(), "reset by peer") {
+			if f.readWorked && f.readRetries <= 20 && strings.Contains(err.Error(), "reset by peer") {
 				// if connection reset by peer and a read previously worked
 				// we try getting a new object before trying again, to cope with
 				// temporary networking issues
@@ -193,17 +194,23 @@ func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 				if goStatus == fuse.OK {
 					f.Info("fillBuffer retry got the object")
 					f.reader = reader
-					f.readWorked = false
+					f.readRetries++
+					<-time.After(1 * time.Second)
 					return f.fillBuffer(buf, offset)
 				}
 				f.Error("fillBuffer retry failed to get the object")
 			}
+			f.Error("fillBuffer read failed after 20 retries, giving up")
 			status = f.r.statusFromErr("Read("+f.path+")", err)
 		}
 		f.readOffset = 0
 		return
 	}
 	f.readWorked = true
+	if f.readRetries > 0 {
+		f.Warn("fillBuffer read succeeded after retrying", "retries", f.readRetries)
+		f.readRetries = 0
+	}
 	f.readOffset += int64(bytesRead)
 	return fuse.OK
 }

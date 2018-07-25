@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [3.0.3] - 2018-07-25
+### Changed
+- On failure to read from remote object store, now retries 20 times with delays,
+  instead of just once.
+
+
 ## [3.0.2] - 2018-04-13
 ### Fixed
 - Can now read from directories when multiplexing with non-existent ones.
