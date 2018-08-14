@@ -22,6 +22,7 @@ package muxfys
 // etc.
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -443,7 +444,7 @@ func (r *remote) seek(rc io.ReadCloser, offset int64, remotePath string) (io.Rea
 		reader, err = r.accessor.Seek(remotePath, rc, offset)
 		return err
 	}
-	status := r.retry("Seek", remotePath, rf)
+	status := r.retry(fmt.Sprintf("Seek(%d)", offset), remotePath, rf)
 	return reader, status
 }
 

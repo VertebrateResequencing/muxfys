@@ -181,11 +181,11 @@ func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 			f.Warn("fillBuffer reader close failed", "err", errc)
 		}
 		f.reader = nil
-		if err == io.EOF {
+		if err == io.EOF && (int64(bytesRead)+f.readOffset == int64(f.attr.Size)) {
 			f.Info("fillBuffer read reached eof")
 			status = fuse.OK
 		} else {
-			f.Error("fillBuffer read failed", "err", err)
+			f.Error("fillBuffer read failed", "err", err, "bytesRead", bytesRead, "readOffset", f.readOffset, "offset", offset, "buffer", len(buf), "atEOF", err == io.EOF)
 			if f.readWorked && f.readRetries <= 20 && strings.Contains(err.Error(), "reset by peer") {
 				// if connection reset by peer and a read previously worked
 				// we try getting a new object before trying again, to cope with
@@ -200,7 +200,7 @@ func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 				}
 				f.Error("fillBuffer retry failed to get the object")
 			}
-			f.Error("fillBuffer read failed after 20 retries, giving up")
+			f.Error("fillBuffer read failed and will no longer retry")
 			status = f.r.statusFromErr("Read("+f.path+")", err)
 		}
 		f.readOffset = 0
