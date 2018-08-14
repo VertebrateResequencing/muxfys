@@ -2491,7 +2491,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			// it should be about as quick as the above streamFile call: much
 			// slower means a bug
-			So(math.Ceil(thisGetTime.Seconds()), ShouldBeLessThanOrEqualTo, math.Ceil(bigFileGetTimeUncached.Seconds())+2)
+			So(math.Ceil(thisGetTime.Seconds()), ShouldBeLessThanOrEqualTo, math.Ceil(bigFileGetTimeUncached.Seconds())+7)
 		})
 
 		Convey("Trying to read a non-existent file fails as expected", func() {
@@ -3045,8 +3045,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			}()
 
 			Convey("Listing mount directory works", func() {
-				entries, err := ioutil.ReadDir(mountPoint)
-				So(err, ShouldBeNil)
+				entries, errr := ioutil.ReadDir(mountPoint)
+				So(errr, ShouldBeNil)
 
 				details := dirDetails(entries)
 				So(details, ShouldContain, "cram_cache:dir")
@@ -3087,8 +3087,8 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			}()
 
 			Convey("Listing mount directory works", func() {
-				entries, err := ioutil.ReadDir(mountPoint)
-				So(err, ShouldBeNil)
+				entries, errr := ioutil.ReadDir(mountPoint)
+				So(errr, ShouldBeNil)
 
 				details := dirDetails(entries)
 				So(details, ShouldContain, "Homo_sapiens.GRCh38_full_analysis_set_plus_decoy_hla.dict:file:756744")
