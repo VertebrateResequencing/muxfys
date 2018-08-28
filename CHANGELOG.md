@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [3.0.4] - 2018-08-18
+### Fixed
+- Critical fix for potential silent errors when reading from an overloaded
+  Ceph storage system.
+
+
 ## [3.0.3] - 2018-07-25
 ### Changed
 - On failure to read from remote object store, now retries 20 times with delays,
