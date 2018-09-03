@@ -270,6 +270,13 @@ func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 		// minio-go or ceph gets bugfixed to avoid this...
 		a.client, err = minio.NewV2(host, config.AccessKey, config.SecretKey, secure)
 	}
+
+	// test that the client actually works (credentials are ok?)
+	_, err = a.ListEntries("/")
+	if err != nil {
+		err = fmt.Errorf("could not access S3: %s", err)
+	}
+
 	return a, err
 }
 

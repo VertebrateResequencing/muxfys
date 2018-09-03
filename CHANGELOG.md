@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [3.0.5] - 2018-09-03
+### Fixed
+- Bad S3 credentials now immediately return an error from NewS3Accessor(),
+  instead of allowing you to proceed to an un-usable mount.
+
+
 ## [3.0.4] - 2018-08-18
 ### Fixed
 - Critical fix for potential silent errors when reading from an overloaded
