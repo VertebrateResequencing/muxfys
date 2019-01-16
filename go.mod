@@ -1,4 +1,4 @@
-module github.com/VertebrateResequencing/muxfys
+module github.com/VertebrateResequencing/muxfys/v4
 
 require (
 	github.com/alexflint/go-filemutex v0.0.0-20171028004239-d358565f3c3f
