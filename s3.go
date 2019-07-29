@@ -37,7 +37,7 @@ import (
 	"strings"
 
 	"github.com/go-ini/ini"
-	"github.com/minio/minio-go"
+	minio "github.com/minio/minio-go/v6"
 	"github.com/mitchellh/go-homedir"
 )
 
@@ -241,9 +241,7 @@ func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 	var bucket, basePath string
 	if len(u.Path) > 1 {
 		parts := strings.Split(u.Path[1:], "/")
-		if len(parts) >= 0 {
-			bucket = parts[0]
-		}
+		bucket = parts[0]
 		if len(parts) >= 1 {
 			basePath = path.Join(parts[1:]...)
 		}
@@ -265,10 +263,11 @@ func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 	if config.Region != "" {
 		a.client, err = minio.NewWithRegion(host, config.AccessKey, config.SecretKey, secure, config.Region)
 	} else {
-		// *** we are temporarily forcing use of V2 signatures for full
-		// compatibility with ceph and uploading 0 byte files; hopefully
-		// minio-go or ceph gets bugfixed to avoid this...
-		a.client, err = minio.NewV2(host, config.AccessKey, config.SecretKey, secure)
+		a.client, err = minio.New(host, config.AccessKey, config.SecretKey, secure)
+	}
+
+	if err != nil {
+		return nil, err
 	}
 
 	// test that the client actually works (credentials are ok?)
@@ -350,7 +349,10 @@ func (a *S3Accessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadC
 
 // CopyFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) CopyFile(source, dest string) error {
-	destInfo, _ := minio.NewDestinationInfo(a.bucket, dest, nil, nil)
+	destInfo, err := minio.NewDestinationInfo(a.bucket, dest, nil, nil)
+	if err != nil {
+		return err
+	}
 	return a.client.CopyObject(destInfo, minio.NewSourceInfo(a.bucket, source, nil))
 }
 

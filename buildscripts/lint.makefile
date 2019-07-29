@@ -10,12 +10,11 @@ race: export CGO_ENABLED = 1
 race:
 	@go test -p 1 -tags netgo --count 1 -v -race ./...
 
-# go get -u gopkg.in/alecthomas/gometalinter.v2
-# gometalinter.v2 --install
+# curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin v1.16.0
 lint:
-	@gometalinter.v2 --vendor --aggregate --deadline=120s ./... | sort
+	@golangci-lint run
 
 lintextra:
-	@gometalinter.v2 --vendor --aggregate --deadline=120s --disable-all --enable=gocyclo --enable=dupl ./... | sort
+	@golangci-lint run -c .golangci_extra.yml
 
 .PHONY: test race lint lintextra

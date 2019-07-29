@@ -49,10 +49,6 @@ type RemoteConfig struct {
 	// all the connection details for accessing your remote file system.
 	Accessor RemoteAccessor
 
-	// CacheData enables caching of remote files that you read locally on disk.
-	// Writes will also be staged on local disk prior to upload.
-	CacheData bool
-
 	// CacheDir is the directory used to cache data if CacheData is true.
 	// (muxfys will try to create this if it doesn't exist). If not supplied
 	// when CacheData is true, muxfys will create a unique temporary directory
@@ -60,6 +56,10 @@ type RemoteConfig struct {
 	// Unmount() - specified CacheDirs do not). Defining this makes CacheData be
 	// treated as true.
 	CacheDir string
+
+	// CacheData enables caching of remote files that you read locally on disk.
+	// Writes will also be staged on local disk prior to upload.
+	CacheData bool
 
 	// Write enables write operations in the mount. Only set true if you know
 	// you really need to write.
@@ -147,17 +147,17 @@ type RemoteAccessor interface {
 // remote struct is used by MuxFys to interact with some remote file system or
 // object store. It embeds a CacheTracker and a RemoteAccessor to do its work.
 type remote struct {
-	*CacheTracker
-	accessor      RemoteAccessor
-	cacheData     bool
-	cacheDir      string
-	cacheIsTmp    bool
-	maxAttempts   int
-	write         bool
-	clientBackoff *backoff.Backoff
-	hasWorked     bool
-	cbMutex       sync.Mutex
+	accessor RemoteAccessor
+	cacheDir string
 	log15.Logger
+	*CacheTracker
+	maxAttempts   int
+	clientBackoff *backoff.Backoff
+	cbMutex       sync.Mutex
+	cacheData     bool
+	cacheIsTmp    bool
+	write         bool
+	hasWorked     bool
 }
 
 // newRemote creates a remote for use inside MuxFys.

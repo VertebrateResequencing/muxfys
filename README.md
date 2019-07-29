@@ -284,7 +284,7 @@ capable of, it shares and adds to goofys' non-POSIX behaviours.
 This project adheres to [Semantic Versioning](http://semver.org/). See
 CHANGELOG.md for a description of changes.
 
-If you want to rely on a stable API, vendor the library, updating within a
-desired version. For example, you could use [Glide](https://glide.sh) and:
+If you want to rely on a stable API, specify the desired version when getting
+this module, eg:
 
-    $ glide get github.com/VertebrateResequencing/muxfys#^2.0.0
+    $ go get github.com/VertebrateResequencing/muxfys@v4
