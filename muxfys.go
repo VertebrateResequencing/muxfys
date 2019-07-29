@@ -304,13 +304,13 @@ func New(config *Config) (*MuxFys, error) {
 // will come from the first remote you configured that has that file.
 func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 	if len(rcs) == 0 {
-		return fmt.Errorf("At least one RemoteConfig must be supplied")
+		return fmt.Errorf("at least one RemoteConfig must be supplied")
 	}
 
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 	if fs.mounted {
-		return fmt.Errorf("Can't mount more that once at a time")
+		return fmt.Errorf("can't mount more that once at a time")
 	}
 
 	// create a remote for every RemoteConfig
@@ -323,7 +323,7 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 		fs.remotes = append(fs.remotes, r)
 		if r.write {
 			if fs.writeRemote != nil {
-				return fmt.Errorf("You can't have more than one writeable remote")
+				return fmt.Errorf("you can't have more than one writeable remote")
 			}
 			fs.writeRemote = r
 		}
