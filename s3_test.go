@@ -551,7 +551,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			}()
 			go func() {
 				defer wg.Done()
-				streamer(path2, int(bigFileSize-700000), 700000)
+				streamer(path2, bigFileSize-700000, 700000)
 			}()
 			wg.Wait()
 			ot := time.Since(t)
@@ -2020,7 +2020,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			}()
 			go func() {
 				defer wg.Done()
-				streamer(path2, int(bigFileSize-700000), 700000)
+				streamer(path2, bigFileSize-700000, 700000)
 			}()
 			wg.Wait()
 			ot := time.Since(t)
