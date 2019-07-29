@@ -354,7 +354,10 @@ func (a *S3Accessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadC
 
 // CopyFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) CopyFile(source, dest string) error {
-	destInfo, _ := minio.NewDestinationInfo(a.bucket, dest, nil, nil)
+	destInfo, err := minio.NewDestinationInfo(a.bucket, dest, nil, nil)
+	if err != nil {
+		return err
+	}
 	return a.client.CopyObject(destInfo, minio.NewSourceInfo(a.bucket, source, nil))
 }
 
