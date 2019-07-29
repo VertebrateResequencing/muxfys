@@ -322,7 +322,7 @@ func TestMuxFys(t *testing.T) {
 			Convey("Once mounted you can't mount again", func() {
 				err := fs.Mount(remoteConfig)
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "Can't mount more that once at a time")
+				So(err.Error(), ShouldEqual, "can't mount more that once at a time")
 			})
 
 			Convey("You can Unmount()", func() {
@@ -583,7 +583,7 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 				err = fs.Mount(remoteConfig, remoteConfig)
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "You can't have more than one writeable remote")
+				So(err.Error(), ShouldEqual, "you can't have more than one writeable remote")
 			})
 
 			Convey("UnmountOnDeath() will exit(2) on failure to unmount", func() {
@@ -694,7 +694,7 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 				err = fs.Mount(remoteConfig, remoteConfig)
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "You can't have more than one writeable remote")
+				So(err.Error(), ShouldEqual, "you can't have more than one writeable remote")
 			})
 		})
 
@@ -845,7 +845,7 @@ func TestMuxFys(t *testing.T) {
 		Convey("You must supply at least one RemoteConfig to Mount()", func() {
 			err := fs.Mount()
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldEqual, "At least one RemoteConfig must be supplied")
+			So(err.Error(), ShouldEqual, "at least one RemoteConfig must be supplied")
 		})
 
 		Convey("You can't Mount() with a bad CacheDir", func() {
