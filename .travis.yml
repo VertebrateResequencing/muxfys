@@ -10,7 +10,7 @@ before_install:
   - sudo sed -i '/user_allow_other/s/^#//g' /etc/fuse.conf
   - go get github.com/mattn/goveralls
 before_script:
-  - go get github.com/minio/minio
+  - GO111MODULE=on go get github.com/minio/minio
   - export PATH=$PATH:$HOME/gopath/bin
   - export MUXFYS_S3_PORT="9000"
 script:
