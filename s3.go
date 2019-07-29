@@ -37,7 +37,7 @@ import (
 	"strings"
 
 	"github.com/go-ini/ini"
-	"github.com/minio/minio-go"
+	minio "github.com/minio/minio-go/v6"
 	"github.com/mitchellh/go-homedir"
 )
 
@@ -263,10 +263,7 @@ func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 	if config.Region != "" {
 		a.client, err = minio.NewWithRegion(host, config.AccessKey, config.SecretKey, secure, config.Region)
 	} else {
-		// *** we are temporarily forcing use of V2 signatures for full
-		// compatibility with ceph and uploading 0 byte files; hopefully
-		// minio-go or ceph gets bugfixed to avoid this...
-		a.client, err = minio.NewV2(host, config.AccessKey, config.SecretKey, secure)
+		a.client, err = minio.New(host, config.AccessKey, config.SecretKey, secure)
 	}
 
 	if err != nil {

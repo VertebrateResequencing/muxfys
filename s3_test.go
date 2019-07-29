@@ -2578,6 +2578,70 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			So(bytes, ShouldResemble, b)
 		})
 
+		Convey("You can upload empty files with cp", func() {
+			path := mountPoint + "/touch.test"
+			localPath := "touch.test"
+			cmd := exec.Command("touch", localPath) // ("bash", "-c", "echo foo > touch.test")
+			err := cmd.Run()
+			defer func() {
+				err = os.Remove(localPath)
+				So(err, ShouldBeNil)
+				err = os.Remove(path)
+				So(err, ShouldBeNil)
+			}()
+			So(err, ShouldBeNil)
+			cmd = exec.Command("cp", localPath, path)
+			err = cmd.Run()
+			So(err, ShouldBeNil)
+
+			<-time.After(1500 * time.Millisecond) // implementation for empty files does a final flush after 1s
+
+			_, err = os.Stat(path)
+			So(err, ShouldBeNil)
+
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldBeNil)
+		})
+
+		Convey("You can create empty files with touch", func() {
+			path := mountPoint + "/touch.test"
+			cmd := exec.Command("touch", path)
+			err := cmd.Run()
+			defer func() {
+				err = os.Remove(path)
+				So(err, ShouldBeNil)
+			}()
+			So(err, ShouldBeNil)
+
+			<-time.After(1500 * time.Millisecond)
+
+			_, err = os.Stat(path)
+			So(err, ShouldBeNil)
+
+			err = fs.Unmount()
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldNotBeNil)
+			So(os.IsNotExist(err), ShouldBeTrue)
+
+			err = fs.Mount(remoteConfig)
+			So(err, ShouldBeNil)
+
+			_, err = os.Stat(path)
+			So(err, ShouldBeNil)
+		})
+
 		if bigFileSize > 10000000 {
 			// *** -race flag isn't passed through to us, so can't limit this skip to just -race
 			SkipConvey("Writing a very large file breaks machines with race detector on", func() {})

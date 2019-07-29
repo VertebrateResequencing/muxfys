@@ -10,6 +10,7 @@ require (
 	github.com/jpillora/backoff v0.0.0-20180909062703-3050d21c67d7
 	github.com/mattn/go-colorable v0.1.2 // indirect
 	github.com/minio/minio-go v6.0.14+incompatible
+	github.com/minio/minio-go/v6 v6.0.33
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22
 	github.com/smartystreets/assertions v1.0.1 // indirect

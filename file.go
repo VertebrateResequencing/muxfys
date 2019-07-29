@@ -43,6 +43,7 @@ type remoteFile struct {
 	mutex         sync.Mutex
 	attr          *fuse.Attr
 	readOffset    int64
+	forceFlush    bool
 	readWorked    bool
 	readRetries   int
 	reader        io.ReadCloser
@@ -220,6 +221,7 @@ func (f *remoteFile) fillBuffer(buf []byte, offset int64) (status fuse.Status) {
 func (f *remoteFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
+	f.forceFlush = false
 
 	if len(data) == 0 {
 		// ignore zero-length writes that come in for some reason
@@ -257,7 +259,7 @@ func (f *remoteFile) Flush() fuse.Status {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	if f.readOffset > 0 && f.reader != nil {
+	if !f.forceFlush && f.readOffset > 0 && f.reader != nil {
 		errc := f.reader.Close()
 		if errc != nil {
 			f.Warn("Flush reader close failed", "err", errc)
@@ -265,21 +267,36 @@ func (f *remoteFile) Flush() fuse.Status {
 		f.reader = nil
 	}
 
-	if f.writeOffset > 0 && f.wpipe != nil {
-		errc := f.wpipe.Close()
-		if errc != nil {
-			f.Warn("Flush wpipe close failed", "err", errc)
-		}
-		f.writeOffset = 0
-		worked := <-f.writeComplete
-		if worked {
-			errc = f.rpipe.Close()
+	if f.wpipe != nil {
+		if f.writeOffset > 0 || f.forceFlush {
+			f.forceFlush = false
+			errc := f.wpipe.Close()
 			if errc != nil {
-				f.Warn("Flush rpipe close failed", "err", errc)
+				f.Warn("Flush wpipe close failed", "err", errc)
 			}
+			f.writeOffset = 0
+			worked := <-f.writeComplete
+			if worked {
+				errc = f.rpipe.Close()
+				if errc != nil {
+					f.Warn("Flush rpipe close failed", "err", errc)
+				}
+			}
+			f.wpipe = nil
+			f.rpipe = nil
+		} else {
+			// can't tell the difference between a Flush() call that came in
+			// prior to the first Write() call, and the Flush() following the
+			// creation of an empty file, where there will never be a Write()
+			// call. Recall this method in a second and force the flush
+			// behaviour to catch the second case, or else there'll be a memory
+			// leak
+			f.forceFlush = true
+			go func() {
+				<-time.After(1 * time.Second)
+				f.Flush()
+			}()
 		}
-		f.wpipe = nil
-		f.rpipe = nil
 	}
 
 	return fuse.OK
