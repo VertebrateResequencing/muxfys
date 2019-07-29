@@ -3193,7 +3193,7 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 }
 
 func dirDetails(entries []os.FileInfo) []string {
-	var details []string
+	details := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		info := entry.Name()
 		if entry.IsDir() {
