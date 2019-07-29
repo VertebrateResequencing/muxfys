@@ -287,4 +287,4 @@ CHANGELOG.md for a description of changes.
 If you want to rely on a stable API, specify the desired version when getting
 this module, eg:
 
-    $ go get github.com/VertebrateResequencing/muxfys@v4
+    $ go get github.com/VertebrateResequencing/muxfys/v4
