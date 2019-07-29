@@ -241,9 +241,7 @@ func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 	var bucket, basePath string
 	if len(u.Path) > 1 {
 		parts := strings.Split(u.Path[1:], "/")
-		if len(parts) >= 0 {
-			bucket = parts[0]
-		}
+		bucket = parts[0]
 		if len(parts) >= 1 {
 			basePath = path.Join(parts[1:]...)
 		}

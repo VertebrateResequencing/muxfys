@@ -562,7 +562,7 @@ func (fs *MuxFys) RemoveXAttr(name string, attr string, context *fuse.Context) f
 // in the cache; otherwise ignored. This only gets called by direct operations
 // like os.Chtimes() (that don't first Open()/Create() the file). context is not
 // currently used.
-func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) fuse.Status {
+func (fs *MuxFys) Utimens(name string, atime *time.Time, mtime *time.Time, context *fuse.Context) fuse.Status {
 	attr, r, status := fs.fileDetails(name, true)
 	if status == fuse.ENOENT {
 		fs.mapMutex.RLock()
@@ -577,10 +577,10 @@ func (fs *MuxFys) Utimens(name string, Atime *time.Time, Mtime *time.Time, conte
 
 	localPath := r.getLocalPath(r.getRemotePath(name))
 	if _, err := os.Stat(localPath); err == nil {
-		err = os.Chtimes(localPath, *Atime, *Mtime)
+		err = os.Chtimes(localPath, *atime, *mtime)
 		if err == nil {
-			attr.Atime = uint64(Atime.Unix())
-			attr.Mtime = uint64(Mtime.Unix())
+			attr.Atime = uint64(atime.Unix())
+			attr.Mtime = uint64(mtime.Unix())
 		}
 		status = fuse.ToStatus(err)
 	}

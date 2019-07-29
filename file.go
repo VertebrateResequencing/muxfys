@@ -384,11 +384,11 @@ func (f *cachedFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
 
 // Utimens gets called by things like `touch -d "2006-01-02 15:04:05" filename`,
 // and we need to update our cached attr as well as the local file.
-func (f *cachedFile) Utimens(Atime *time.Time, Mtime *time.Time) (status fuse.Status) {
-	status = f.InnerFile().Utimens(Atime, Mtime)
+func (f *cachedFile) Utimens(atime *time.Time, mtime *time.Time) (status fuse.Status) {
+	status = f.InnerFile().Utimens(atime, mtime)
 	if status == fuse.OK {
-		f.attr.Atime = uint64(Atime.Unix())
-		f.attr.Mtime = uint64(Mtime.Unix())
+		f.attr.Atime = uint64(atime.Unix())
+		f.attr.Mtime = uint64(mtime.Unix())
 	}
 	return status
 }
@@ -429,7 +429,7 @@ func (f *cachedFile) Read(buf []byte, offset int64) (fuse.ReadResult, fuse.Statu
 
 		// write the data to our cache file
 		if !f.openedRW {
-			f.flags = f.flags | os.O_RDWR
+			f.flags |= os.O_RDWR
 			f.makeLoopback()
 		}
 		n, s := f.InnerFile().Write(ivBuf, iv.Start)
