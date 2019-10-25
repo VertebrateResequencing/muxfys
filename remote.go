@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/inconshreveable/log15"
 	"github.com/jpillora/backoff"
 	"github.com/mitchellh/go-homedir"

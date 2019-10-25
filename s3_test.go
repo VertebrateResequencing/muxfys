@@ -39,7 +39,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/v2/fuse"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
