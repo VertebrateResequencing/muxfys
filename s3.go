@@ -327,7 +327,7 @@ func (a *S3Accessor) OpenFile(path string, offset int64) (io.ReadCloser, error) 
 		}
 	}
 	core := minio.Core{Client: a.client}
-	reader, _, err := core.GetObject(a.bucket, path, opts)
+	reader, _, _, err := core.GetObject(a.bucket, path, opts)
 	return reader, err
 }
 
@@ -343,7 +343,7 @@ func (a *S3Accessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadC
 		return nil, err
 	}
 	core := minio.Core{Client: a.client}
-	reader, _, err := core.GetObject(a.bucket, path, opts)
+	reader, _, _, err := core.GetObject(a.bucket, path, opts)
 	return reader, err
 }
 
