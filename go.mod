@@ -1,21 +1,16 @@
 module github.com/VertebrateResequencing/muxfys/v4
 
 require (
-	github.com/a8m/mark v0.1.1-0.20170507133748-44f2db618845 // indirect
 	github.com/alexflint/go-filemutex v1.0.0
-	github.com/gernest/wow v0.1.0 // indirect
 	github.com/go-ini/ini v1.49.0
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20190915194858-d3ddacdb130f // indirect
-	github.com/hanwen/go-fuse v1.0.0
 	github.com/hanwen/go-fuse/v2 v2.0.2
 	github.com/inconshreveable/log15 v0.0.0-20180818164646-67afb5ed74ec
 	github.com/jpillora/backoff v1.0.0
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.4 // indirect
 	github.com/mattn/go-isatty v0.0.10 // indirect
-	github.com/minio/cli v1.20.0 // indirect
-	github.com/minio/minio-go v6.0.14+incompatible
 	github.com/minio/minio-go/v6 v6.0.39
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22
