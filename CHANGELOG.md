@@ -5,10 +5,15 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [4.0.2] - 2019-10-28
+### Changed
+- go.mod has had 'go mod tidy' run on it.
+
+
 ## [4.0.1] - 2019-10-25
 ### Fixed
-- Compatability with latest minio
-- Compatability with go v1.13
+- Compatability with latest minio.
+- Compatability with go v1.13.
 
 
 ## [4.0.0] - 2019-07-29
