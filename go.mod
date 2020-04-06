@@ -1,7 +1,7 @@
 module github.com/VertebrateResequencing/muxfys/v4
 
 require (
-	github.com/alexflint/go-filemutex v1.0.0
+	github.com/alexflint/go-filemutex v1.1.0
 	github.com/go-ini/ini v1.49.0
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20190915194858-d3ddacdb130f // indirect
