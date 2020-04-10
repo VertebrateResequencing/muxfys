@@ -5,7 +5,7 @@ require (
 	github.com/go-ini/ini v1.49.0
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20190915194858-d3ddacdb130f // indirect
-	github.com/hanwen/go-fuse/v2 v2.0.2
+	github.com/hanwen/go-fuse/v2 v2.0.3
 	github.com/inconshreveable/log15 v0.0.0-20180818164646-67afb5ed74ec
 	github.com/jpillora/backoff v1.0.0
 	github.com/kr/pretty v0.1.0 // indirect
