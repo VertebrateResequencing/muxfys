@@ -11,7 +11,7 @@ require (
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.4 // indirect
 	github.com/mattn/go-isatty v0.0.10 // indirect
-	github.com/minio/minio-go/v6 v6.0.39
+	github.com/minio/minio-go/v6 v6.0.55
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22
 	github.com/smartystreets/assertions v1.0.1 // indirect
