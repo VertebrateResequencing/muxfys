@@ -1,4 +1,4 @@
-// Copyright © 2017, 2018 Genome Research Limited
+// Copyright © 2017, 2018, 2021 Genome Research Limited
 // Author: Sendu Bala <sb10@sanger.ac.uk>.
 // The target parsing code in this file is based on code in
 // https://github.com/minio/minfs Copyright 2016 Minio, Inc.
@@ -28,6 +28,7 @@ package muxfys
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net/url"
@@ -37,7 +38,8 @@ import (
 	"strings"
 
 	"github.com/go-ini/ini"
-	minio "github.com/minio/minio-go/v6"
+	minio "github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/mitchellh/go-homedir"
 )
 
@@ -260,11 +262,11 @@ func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 
 	// create a client for interacting with S3 (we do this here instead of
 	// as-needed inside remote because there's large overhead in creating these)
-	if config.Region != "" {
-		a.client, err = minio.NewWithRegion(host, config.AccessKey, config.SecretKey, secure, config.Region)
-	} else {
-		a.client, err = minio.New(host, config.AccessKey, config.SecretKey, secure)
-	}
+	a.client, err = minio.New(host, &minio.Options{
+		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
+		Region: config.Region,
+		Secure: secure,
+	})
 
 	if err != nil {
 		return nil, err
@@ -281,30 +283,35 @@ func NewS3Accessor(config *S3Config) (*S3Accessor, error) {
 
 // DownloadFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) DownloadFile(source, dest string) error {
-	return a.client.FGetObject(a.bucket, source, dest, minio.GetObjectOptions{})
+	return a.client.FGetObject(context.Background(), a.bucket, source, dest, minio.GetObjectOptions{})
 }
 
 // UploadFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) UploadFile(source, dest, contentType string) error {
-	_, err := a.client.FPutObject(a.bucket, dest, source, minio.PutObjectOptions{ContentType: contentType})
+	_, err := a.client.FPutObject(context.Background(), a.bucket, dest, source, minio.PutObjectOptions{ContentType: contentType})
 	return err
 }
 
 // UploadData implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) UploadData(data io.Reader, dest string) error {
 	//*** try and do our own buffered read to initially get the mime type?
-	_, err := a.client.PutObject(a.bucket, dest, data, -1, minio.PutObjectOptions{})
+	_, err := a.client.PutObject(context.Background(), a.bucket, dest, data, -1, minio.PutObjectOptions{})
 	return err
 }
 
 // ListEntries implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) ListEntries(dir string) ([]RemoteAttr, error) {
-	doneCh := make(chan struct{})
-	oiCh := a.client.ListObjects(a.bucket, dir, false, doneCh)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	oiCh := a.client.ListObjects(ctx, a.bucket, minio.ListObjectsOptions{
+		Prefix:    dir,
+		Recursive: false,
+	})
+
 	var ras []RemoteAttr
 	for oi := range oiCh {
 		if oi.Err != nil {
-			close(doneCh)
 			return nil, oi.Err
 		}
 		ras = append(ras, RemoteAttr{
@@ -314,6 +321,7 @@ func (a *S3Accessor) ListEntries(dir string) ([]RemoteAttr, error) {
 			MD5:   oi.ETag,
 		})
 	}
+
 	return ras, nil
 }
 
@@ -327,7 +335,7 @@ func (a *S3Accessor) OpenFile(path string, offset int64) (io.ReadCloser, error) 
 		}
 	}
 	core := minio.Core{Client: a.client}
-	reader, _, _, err := core.GetObject(a.bucket, path, opts)
+	reader, _, _, err := core.GetObject(context.Background(), a.bucket, path, opts)
 	return reader, err
 }
 
@@ -343,27 +351,31 @@ func (a *S3Accessor) Seek(path string, rc io.ReadCloser, offset int64) (io.ReadC
 		return nil, err
 	}
 	core := minio.Core{Client: a.client}
-	reader, _, _, err := core.GetObject(a.bucket, path, opts)
+	reader, _, _, err := core.GetObject(context.Background(), a.bucket, path, opts)
 	return reader, err
 }
 
 // CopyFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) CopyFile(source, dest string) error {
-	destInfo, err := minio.NewDestinationInfo(a.bucket, dest, nil, nil)
-	if err != nil {
-		return err
-	}
-	return a.client.CopyObject(destInfo, minio.NewSourceInfo(a.bucket, source, nil))
+	_, err := a.client.CopyObject(context.Background(),
+		minio.CopyDestOptions{
+			Bucket: a.bucket,
+			Object: dest,
+		}, minio.CopySrcOptions{
+			Bucket: a.bucket,
+			Object: source,
+		})
+	return err
 }
 
 // DeleteFile implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) DeleteFile(path string) error {
-	return a.client.RemoveObject(a.bucket, path)
+	return a.client.RemoveObject(context.Background(), a.bucket, path, minio.RemoveObjectOptions{})
 }
 
 // DeleteIncompleteUpload implements RemoteAccessor by deferring to minio.
 func (a *S3Accessor) DeleteIncompleteUpload(path string) error {
-	return a.client.RemoveIncompleteUpload(a.bucket, path)
+	return a.client.RemoveIncompleteUpload(context.Background(), a.bucket, path)
 }
 
 // ErrorIsNotExists implements RemoteAccessor by looking for the NoSuchKey error
