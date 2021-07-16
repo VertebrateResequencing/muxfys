@@ -1,7 +1,7 @@
 language: go
 sudo: true
 go:
-  - "1.13.3"
+  - "1.16.3"
 before_install:
   - sudo apt-get install -qq pkg-config fuse
   - sudo modprobe fuse
