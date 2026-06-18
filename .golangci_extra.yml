@@ -1,43 +1,50 @@
+version: "2"
 run:
-  deadline: 4m
   build-tags:
     - netgo
   modules-download-mode: readonly
-
-output:
-  format: colored-line-number
-
-linters-settings:
-  gocyclo:
-    # minimal code complexity to report, 30 by default (but we recommend 10-20)
-    min-complexity: 10
-  dupl:
-    # tokens count to trigger issue, 150 by default
-    threshold: 100
-
 linters:
-  disable-all: true
-  enable-all: false
+  default: none
   enable:
     - dupl
-    - gocyclo
     - gochecknoglobals
     - gochecknoinits
-
+    - gocyclo
+  settings:
+    dupl:
+      threshold: 100
+    gocyclo:
+      min-complexity: 10
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - dupl
+          - gochecknoglobals
+          - gochecknoinits
+          - gocyclo
+        path: _test\.go
+      - linters:
+          - dupl
+          - gochecknoglobals
+          - gochecknoinits
+          - gocyclo
+        path: cmd/
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - dupl
-        - gochecknoglobals
-        - gochecknoinits
-    - path: cmd/
-      linters:
-        - gocyclo
-        - dupl
-        - gochecknoglobals
-        - gochecknoinits
-
   new: true
-
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
