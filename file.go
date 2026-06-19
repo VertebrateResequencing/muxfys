@@ -31,7 +31,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 )
 
 // remoteFile struct is muxfys' implementation of pathfs.File for reading data

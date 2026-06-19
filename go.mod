@@ -3,11 +3,11 @@ module github.com/VertebrateResequencing/muxfys/v4
 require (
 	github.com/alexflint/go-filemutex v1.3.0
 	github.com/hanwen/go-fuse/v2 v2.10.1
-	github.com/inconshreveable/log15 v0.0.0-20260513190938-e4019e44beb2
+	github.com/inconshreveable/log15/v3 v3.2.1
 	github.com/jpillora/backoff v1.0.0
 	github.com/minio/minio-go/v7 v7.2.0
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22
+	github.com/sb10/l15h/v2 v2.0.0
 	github.com/smartystreets/goconvey v1.8.1
 	gopkg.in/ini.v1 v1.67.3
 )
@@ -15,7 +15,6 @@ require (
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gopherjs/gopherjs v1.20.2 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect

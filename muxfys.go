@@ -33,13 +33,13 @@ you want to run against the files in your buckets much simpler, eg. instead of
 mounting s3://publicbucket, s3://myinputbucket and s3://myoutputbucket to
 separate mount points and running:
 
- $ myexe -ref /mnt/publicbucket/refs/human/ref.fa -i /mnt/myinputbucket/xyz/123/
-   input.file > /mnt/myoutputbucket/xyz/123/output.file
+	$ myexe -ref /mnt/publicbucket/refs/human/ref.fa -i /mnt/myinputbucket/xyz/123/
+	  input.file > /mnt/myoutputbucket/xyz/123/output.file
 
 You could multiplex the 3 buckets (at the desired paths) on to the directory you
 will work from and just run:
 
- $ myexe -ref ref.fa -i input.file > output.file
+	$ myexe -ref ref.fa -i input.file > output.file
 
 When using muxfys, you 1) mount, 2) do something that needs the files in your S3
 bucket(s), 3) unmount. Then repeat 1-3 for other things that need data in your
@@ -47,69 +47,69 @@ S3 buckets.
 
 # Usage
 
-    import "github.com/VertebrateResequencing/muxfys"
+	import "github.com/VertebrateResequencing/muxfys"
 
-    // fully manual S3 configuration
-    accessorConfig := &muxfys.S3Config{
-        Target:    "https://s3.amazonaws.com/mybucket/subdir",
-        Region:    "us-east-1",
-        AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
-        SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-    }
-    accessor, err := muxfys.NewS3Accessor(accessorConfig)
-    if err != nil {
-        log.Fatal(err)
-    }
-    remoteConfig1 := &muxfys.RemoteConfig{
-        Accessor: accessor,
-        CacheDir: "/tmp/muxfys/cache",
-        Write:    true,
-    }
+	// fully manual S3 configuration
+	accessorConfig := &muxfys.S3Config{
+	    Target:    "https://s3.amazonaws.com/mybucket/subdir",
+	    Region:    "us-east-1",
+	    AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
+	    SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+	}
+	accessor, err := muxfys.NewS3Accessor(accessorConfig)
+	if err != nil {
+	    log.Fatal(err)
+	}
+	remoteConfig1 := &muxfys.RemoteConfig{
+	    Accessor: accessor,
+	    CacheDir: "/tmp/muxfys/cache",
+	    Write:    true,
+	}
 
-    // or read configuration from standard AWS S3 config files and environment
-    // variables
-    accessorConfig, err = muxfys.S3ConfigFromEnvironment("default",
-        "myotherbucket/another/subdir")
-    if err != nil {
-        log.Fatalf("could not read config from environment: %s\n", err)
-    }
-    accessor, err = muxfys.NewS3Accessor(accessorConfig)
-    if err != nil {
-        log.Fatal(err)
-    }
-    remoteConfig2 := &muxfys.RemoteConfig{
-        Accessor:  accessor,
-        CacheData: true,
-    }
+	// or read configuration from standard AWS S3 config files and environment
+	// variables
+	accessorConfig, err = muxfys.S3ConfigFromEnvironment("default",
+	    "myotherbucket/another/subdir")
+	if err != nil {
+	    log.Fatalf("could not read config from environment: %s\n", err)
+	}
+	accessor, err = muxfys.NewS3Accessor(accessorConfig)
+	if err != nil {
+	    log.Fatal(err)
+	}
+	remoteConfig2 := &muxfys.RemoteConfig{
+	    Accessor:  accessor,
+	    CacheData: true,
+	}
 
-    cfg := &muxfys.Config{
-        Mount:     "/tmp/muxfys/mount",
-        CacheBase: "/tmp",
-        Retries:   3,
-        Verbose:   true,
-    }
+	cfg := &muxfys.Config{
+	    Mount:     "/tmp/muxfys/mount",
+	    CacheBase: "/tmp",
+	    Retries:   3,
+	    Verbose:   true,
+	}
 
-    fs, err := muxfys.New(cfg)
-    if err != nil {
-        log.Fatalf("bad configuration: %s\n", err)
-    }
+	fs, err := muxfys.New(cfg)
+	if err != nil {
+	    log.Fatalf("bad configuration: %s\n", err)
+	}
 
-    err = fs.Mount(remoteConfig, remoteConfig2)
-    if err != nil {
-        log.Fatalf("could not mount: %s\n", err)
-    }
-    fs.UnmountOnDeath()
+	err = fs.Mount(remoteConfig, remoteConfig2)
+	if err != nil {
+	    log.Fatalf("could not mount: %s\n", err)
+	}
+	fs.UnmountOnDeath()
 
-    // read from & write to files in /tmp/muxfys/mount, which contains the
-    // contents of mybucket/subdir and myotherbucket/another/subdir; writes will
-    // get uploaded to mybucket/subdir when you Unmount()
+	// read from & write to files in /tmp/muxfys/mount, which contains the
+	// contents of mybucket/subdir and myotherbucket/another/subdir; writes will
+	// get uploaded to mybucket/subdir when you Unmount()
 
-    err = fs.Unmount()
-    if err != nil {
-        log.Fatalf("could not unmount: %s\n", err)
-    }
+	err = fs.Unmount()
+	if err != nil {
+	    log.Fatalf("could not unmount: %s\n", err)
+	}
 
-    logs := fs.Logs()
+	logs := fs.Logs()
 
 # Extending
 
@@ -136,9 +136,9 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	"github.com/mitchellh/go-homedir"
-	"github.com/sb10/l15h"
+	"github.com/sb10/l15h/v2"
 )
 
 const (
@@ -148,6 +148,7 @@ const (
 	symlinkSize = uint64(7)
 )
 
+//nolint:gochecknoglobals // Package-level logger state backs the public SetLogHandler API.
 var (
 	logHandlerSetter = l15h.NewChanger(log15.DiscardHandler())
 	pkgLogger        = log15.New("pkg", "muxfys")
@@ -259,7 +260,8 @@ func New(config *Config) (*MuxFys, error) {
 	if config.Verbose {
 		logLevel = log15.LvlInfo
 	}
-	l15h.AddHandler(logger, log15.LvlFilterHandler(logLevel, l15h.CallerInfoHandler(l15h.StoreHandler(store, log15.LogfmtFormat()))))
+
+	l15h.AddHandler(logger, l15h.CallerInfoHandler(log15.LvlFilterHandler(logLevel, l15h.StoreHandler(store, log15.LogfmtFormat()))))
 
 	// initialize ourselves
 	fs := &MuxFys{
@@ -565,7 +567,7 @@ func (fs *MuxFys) Logs() []string {
 // instances using MuxFys.Logs(), but otherwise by default are discarded.
 //
 // To have them logged somewhere as they are emitted, supply a
-// github.com/inconshreveable/log15.Handler. For example, supplying
+// github.com/inconshreveable/log15/v3.Handler. For example, supplying
 // log15.StderrHandler would log everything to STDERR.
 func SetLogHandler(h log15.Handler) {
 	logHandlerSetter.SetHandler(h)

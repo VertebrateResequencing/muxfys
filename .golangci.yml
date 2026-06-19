@@ -11,7 +11,9 @@ linters:
     - gochecknoglobals
     - gochecknoinits
     - gocyclo
+    - gomodguard
     - lll
+    - wsl
   settings:
     errcheck:
       check-type-assertions: false

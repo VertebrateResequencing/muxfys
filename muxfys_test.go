@@ -33,7 +33,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -494,7 +494,7 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				Convey("SetLogHandler() lets you log events", func() {
-					recs := make(chan *log15.Record, 10)
+					recs := make(chan log15.Record, 10)
 					SetLogHandler(log15.ChannelHandler(recs))
 
 					err := fs.Mount(remoteConfig)

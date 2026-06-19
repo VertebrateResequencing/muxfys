@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+  pull_request:
+    branches:
+      - master
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5.0.0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6.4.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Install FUSE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config fuse3
+          sudo modprobe fuse || true
+          sudo chmod 666 /dev/fuse
+          sudo sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
+
+      - name: Install MinIO
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://dl.min.io/server/minio/release/linux-amd64/minio -o "$HOME/.local/bin/minio"
+          chmod +x "$HOME/.local/bin/minio"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run tests
+        run: make test
+
+      - name: Run tests with race detection
+        run: make race
+
+      - name: Run coverage
+        run: make coverage
