@@ -127,8 +127,10 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -146,6 +148,8 @@ const (
 	fileMode    = 0600
 	dirSize     = uint64(4096)
 	symlinkSize = uint64(7)
+
+	maxLogStackDepth = 32
 )
 
 //nolint:gochecknoglobals // Package-level logger state backs the public SetLogHandler API.
@@ -262,8 +266,8 @@ func New(config *Config) (*MuxFys, error) {
 	}
 
 	storeHandler := l15h.StoreHandler(store, log15.LogfmtFormat())
-	levelHandler := log15.LvlFilterHandler(logLevel, storeHandler)
-	l15h.AddHandler(logger, l15h.CallerInfoHandler(levelHandler))
+	levelHandler := callerInfoAfterLevelFilterHandler(logLevel, storeHandler)
+	l15h.AddHandler(logger, levelHandler)
 
 	// initialize ourselves
 	fs := &MuxFys{
@@ -573,6 +577,135 @@ func (fs *MuxFys) Logs() []string {
 // log15.StderrHandler would log everything to STDERR.
 func SetLogHandler(h log15.Handler) {
 	logHandlerSetter.SetHandler(h)
+}
+
+func callerInfoAfterLevelFilterHandler(maxLvl log15.Lvl, h log15.Handler) log15.Handler {
+	return log15.FuncHandler(func(r log15.Record) error {
+		if r.Lvl > maxLvl {
+			return nil
+		}
+
+		return h.Log(addLogCallerContext(r))
+	})
+}
+
+func addLogCallerContext(r log15.Record) log15.Record {
+	switch r.Lvl {
+	case log15.LvlDebug, log15.LvlWarn, log15.LvlError:
+		return addLogCallerInfo(r)
+	case log15.LvlCrit:
+		return addLogCallerStack(r)
+	default:
+		return r
+	}
+}
+
+func addLogCallerInfo(r log15.Record) log15.Record {
+	caller := logCallerInfo()
+	if caller == "" {
+		return r
+	}
+
+	r.Ctx = append(r.Ctx, "caller", caller)
+
+	return r
+}
+
+func logCallerInfo() string {
+	sites := logCallSites()
+	if len(sites) == 0 {
+		return ""
+	}
+
+	return sites[0]
+}
+
+func addLogCallerStack(r log15.Record) log15.Record {
+	stack := logCallerStack()
+	if stack == "" {
+		return r
+	}
+
+	r.Ctx = append(r.Ctx, "stack", stack)
+
+	return r
+}
+
+func logCallerStack() string {
+	sites := logCallSites()
+	if len(sites) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("[%s]", strings.Join(sites, " "))
+}
+
+func logCallSites() []string {
+	var pcs [maxLogStackDepth]uintptr
+
+	n := runtime.Callers(0, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	sites := make([]string, 0, n)
+
+	frame, more, ok := nextExternalLogFrame(frames)
+	if !ok {
+		return sites
+	}
+
+	for {
+		if isRuntimeFrame(frame.Function) {
+			return sites
+		}
+
+		sites = append(sites, fmt.Sprintf("%s:%d", filepath.Base(frame.File), frame.Line))
+		if !more {
+			return sites
+		}
+
+		frame, more = frames.Next()
+	}
+}
+
+func nextExternalLogFrame(frames *runtime.Frames) (runtime.Frame, bool, bool) {
+	for {
+		frame, more := frames.Next()
+		if !isLogInternalFrame(frame.Function) {
+			return frame, more, true
+		}
+
+		if !more {
+			return runtime.Frame{}, false, false
+		}
+	}
+}
+
+func isLogInternalFrame(function string) bool {
+	if function == "runtime.Callers" {
+		return true
+	}
+
+	internalFrames := [...]string{
+		"github.com/inconshreveable/log15",
+		"github.com/sb10/l15h",
+		".callerInfoAfterLevelFilterHandler",
+		".addLogCallerContext",
+		".addLogCallerInfo",
+		".addLogCallerStack",
+		".logCallerInfo",
+		".logCallerStack",
+		".logCallSites",
+	}
+	for _, internalFrame := range internalFrames {
+		if strings.Contains(function, internalFrame) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isRuntimeFrame(function string) bool {
+	return strings.HasPrefix(function, "runtime.")
 }
 
 // logClose is for use to Close() an object during a defer when you don't care

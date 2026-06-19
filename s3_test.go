@@ -208,7 +208,8 @@ func seedLocalS3TestData(endpoint, bucket, prefix, sourceDir, accessKey, secretK
 		return fmt.Errorf("create minio client: %w", err)
 	}
 
-	ctx := context.Background()
+	ctx, cancelSeed := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelSeed()
 
 	exists, err := client.BucketExists(ctx, bucket)
 	if err != nil {

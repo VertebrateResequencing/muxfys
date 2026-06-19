@@ -131,6 +131,8 @@ linters:
           - dupl
           - funlen
           - gocognit
+          - gochecknoglobals
+          - gochecknoinits
           - gocyclo
           - maintidx
           - gosec
