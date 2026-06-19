@@ -1,11 +1,11 @@
 # muxfys
 
-[![GoDoc](https://godoc.org/github.com/VertebrateResequencing/muxfys?status.svg)](https://godoc.org/github.com/VertebrateResequencing/muxfys)
+[![Go Reference](https://pkg.go.dev/badge/github.com/VertebrateResequencing/muxfys/v5.svg)](https://pkg.go.dev/github.com/VertebrateResequencing/muxfys/v5)
 [![Go Report Card](https://goreportcard.com/badge/github.com/VertebrateResequencing/muxfys)](https://goreportcard.com/report/github.com/VertebrateResequencing/muxfys)
 [![tests](https://github.com/VertebrateResequencing/muxfys/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/VertebrateResequencing/muxfys/actions/workflows/tests.yml)
 [![golangci-lint](https://github.com/VertebrateResequencing/muxfys/actions/workflows/golangci-lint.yml/badge.svg?branch=master)](https://github.com/VertebrateResequencing/muxfys/actions/workflows/golangci-lint.yml)
 
-    go get github.com/VertebrateResequencing/muxfys
+    go get github.com/VertebrateResequencing/muxfys/v5
 
 
 muxfys is a pure Go library for temporarily in-process mounting multiple
@@ -181,7 +181,7 @@ that muxfys can coordinate the cache amongst independent processes.)
 # Usage
 
 ```go
-import "github.com/VertebrateResequencing/muxfys"
+import "github.com/VertebrateResequencing/muxfys/v5"
 
 // fully manual S3 configuration
 accessorConfig := &muxfys.S3Config{
@@ -287,4 +287,4 @@ CHANGELOG.md for a description of changes.
 If you want to rely on a stable API, specify the desired version when getting
 this module, eg:
 
-    $ go get github.com/VertebrateResequencing/muxfys/v4
+    $ go get github.com/VertebrateResequencing/muxfys/v5

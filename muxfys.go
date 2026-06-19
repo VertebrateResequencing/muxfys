@@ -47,7 +47,7 @@ S3 buckets.
 
 # Usage
 
-	import "github.com/VertebrateResequencing/muxfys"
+	import "github.com/VertebrateResequencing/muxfys/v5"
 
 	// fully manual S3 configuration
 	accessorConfig := &muxfys.S3Config{

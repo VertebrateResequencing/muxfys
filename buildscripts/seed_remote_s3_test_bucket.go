@@ -38,7 +38,7 @@ import (
 	"path"
 	"strings"
 
-	muxfys "github.com/VertebrateResequencing/muxfys/v4"
+	muxfys "github.com/VertebrateResequencing/muxfys/v5"
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
