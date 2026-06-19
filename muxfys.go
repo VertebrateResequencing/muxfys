@@ -261,7 +261,9 @@ func New(config *Config) (*MuxFys, error) {
 		logLevel = log15.LvlInfo
 	}
 
-	l15h.AddHandler(logger, l15h.CallerInfoHandler(log15.LvlFilterHandler(logLevel, l15h.StoreHandler(store, log15.LogfmtFormat()))))
+	storeHandler := l15h.StoreHandler(store, log15.LogfmtFormat())
+	levelHandler := log15.LvlFilterHandler(logLevel, storeHandler)
+	l15h.AddHandler(logger, l15h.CallerInfoHandler(levelHandler))
 
 	// initialize ourselves
 	fs := &MuxFys{

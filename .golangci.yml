@@ -4,28 +4,119 @@ run:
     - netgo
   modules-download-mode: readonly
 linters:
-  default: all
-  disable:
-    - depguard
+  default: none
+  enable:
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - dogsled
     - dupl
+    - dupword
+    - durationcheck
+    - err113
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - forbidigo
+    - forcetypeassert
+    - funlen
+    - gocheckcompilerdirectives
     - gochecknoglobals
     - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
     - gocyclo
-    - gomodguard
+    - godot
+    - godox
+    - gosec
+    - gosmopolitan
+    - govet
+    - grouper
+    - importas
+    - inamedparam
+    - ineffassign
+    - interfacebloat
     - lll
-    - wsl
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - mnd
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - nlreturn
+    - noctx
+    - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - prealloc
+    - predeclared
+    - reassign
+    - revive
+    - sloglint
+    - staticcheck
+    - tagalign
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+    - wsl_v5
   settings:
+    dupl:
+      threshold: 100
     errcheck:
-      check-type-assertions: false
+      check-type-assertions: true
       check-blank: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    funlen:
+      lines: 30
+      statements: 20
+    gocognit:
+      min-complexity: 9
+    gocyclo:
+      min-complexity: 7
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+      disable-all: false
+    lll:
+      line-length: 120
+    misspell:
+      locale: UK
+      ignore-rules:
+        - flavor
+        - flavors
     nakedret:
-      max-func-lines: 30
+      max-func-lines: 20
+    nestif:
+      min-complexity: 2
     prealloc:
       simple: true
       range-loops: true
       for-loops: true
-    unparam:
-      check-exported: false
+    whitespace:
+      multi-if: true
+      multi-func: false
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
+      enable:
+        - err
   exclusions:
     generated: lax
     presets:
@@ -35,10 +126,31 @@ linters:
       - std-error-handling
     rules:
       - linters:
+          - contextcheck
+          - cyclop
           - dupl
-          - errcheck
+          - funlen
+          - gocognit
           - gocyclo
+          - maintidx
           - gosec
+          - revive
+        path: _test\.go
+      - linters:
+          - dupl
+          - forbidigo
+          - gochecknoglobals
+          - gochecknoinits
+        path: cmd
+      - linters:
+          - funlen
+          - mnd
+        path: internal
+      - linters:
+          - forbidigo
+        path: version\.go
+      - linters:
+          - mnd
         path: _test\.go
     paths:
       - third_party$
@@ -47,11 +159,10 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  new: true
+  new-from-rev: master
 formatters:
   enable:
     - gci
-    - gofumpt
     - goimports
   exclusions:
     generated: lax

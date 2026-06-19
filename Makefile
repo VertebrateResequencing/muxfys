@@ -10,7 +10,9 @@ lint:
 	@test -z "$$(gofmt -l $(GO_FILES))"
 	@go mod tidy -diff
 	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --timeout=5m
-	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run -c .golangci_extra.yml --timeout=5m
+
+lint-fix:
+	@go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --fix --timeout=5m
 
 test: export CGO_ENABLED = 0
 test:
@@ -26,4 +28,4 @@ coverage:
 
 gates: lint test race coverage
 
-.PHONY: default lint test race coverage gates
+.PHONY: default lint lint-fix test race coverage gates
