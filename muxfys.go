@@ -669,7 +669,7 @@ func logCallSites() []string {
 func nextExternalLogFrame(frames *runtime.Frames) (runtime.Frame, bool, bool) {
 	for {
 		frame, more := frames.Next()
-		if !isLogInternalFrame(frame.Function) {
+		if !isLogInternalFrame(frame.Function) && !isRuntimeFrame(frame.Function) {
 			return frame, more, true
 		}
 
