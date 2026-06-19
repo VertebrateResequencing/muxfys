@@ -19,6 +19,7 @@
 package muxfys
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -32,12 +33,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+var errFileSizeNotReached = errors.New("file did not reach expected size")
+
 var uploadFail bool
+
 var resetMutex sync.Mutex
+
 var resetFail bool
 
 // openedObject is what a localAccessor returns from its OpenFile() method. It
@@ -62,6 +67,36 @@ func (f *openedObject) Seek(offset int64, whence int) (int64, error) {
 
 func (f *openedObject) Close() error {
 	return f.object.Close()
+}
+
+func waitForFileSize(path string, size int64) (int64, error) {
+	deadline := time.Now().Add(time.Second)
+
+	var currentSize int64
+
+	for {
+		info, err := os.Stat(path)
+		if err != nil {
+			if time.Now().After(deadline) {
+				return currentSize, fmt.Errorf("stat %s: %w", path, err)
+			}
+
+			time.Sleep(10 * time.Millisecond)
+
+			continue
+		}
+
+		currentSize = info.Size()
+		if currentSize == size {
+			return currentSize, nil
+		}
+
+		if time.Now().After(deadline) {
+			return currentSize, fmt.Errorf("%w: %s expected %d got %d", errFileSizeNotReached, path, size, currentSize)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // localAccessor implements RemoteAccessor: it just accesses the local POSIX
@@ -459,7 +494,7 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				Convey("SetLogHandler() lets you log events", func() {
-					recs := make(chan *log15.Record, 10)
+					recs := make(chan log15.Record, 10)
 					SetLogHandler(log15.ChannelHandler(recs))
 
 					err := fs.Mount(remoteConfig)
@@ -664,21 +699,25 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 0)
 
-				f.WriteString("test\n")
-
-				info, err = os.Stat(sourceFile)
+				written, err := f.WriteString("test\n")
 				So(err, ShouldBeNil)
-				So(info.Size(), ShouldEqual, 5)
+				So(written, ShouldEqual, 5)
+
+				size, err := waitForFileSize(sourceFile, 5)
+				So(err, ShouldBeNil)
+				So(size, ShouldEqual, 5)
 
 				info, err = os.Stat(mountFile)
 				So(err, ShouldBeNil)
 				So(info.Size(), ShouldEqual, 5)
 
-				f.WriteString("test2\n")
-
-				info, err = os.Stat(sourceFile)
+				written, err = f.WriteString("test2\n")
 				So(err, ShouldBeNil)
-				So(info.Size(), ShouldEqual, 11)
+				So(written, ShouldEqual, 6)
+
+				size, err = waitForFileSize(sourceFile, 11)
+				So(err, ShouldBeNil)
+				So(size, ShouldEqual, 11)
 
 				info, err = os.Stat(mountFile)
 				So(err, ShouldBeNil)

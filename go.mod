@@ -1,33 +1,40 @@
-module github.com/VertebrateResequencing/muxfys/v4
+module github.com/VertebrateResequencing/muxfys/v5
 
 require (
-	github.com/alexflint/go-filemutex v1.0.0
-	github.com/go-ini/ini v1.49.0
-	github.com/go-stack/stack v1.8.0 // indirect
-	github.com/google/uuid v1.3.0 // indirect
-	github.com/gopherjs/gopherjs v0.0.0-20190915194858-d3ddacdb130f // indirect
-	github.com/hanwen/go-fuse/v2 v2.0.2
-	github.com/inconshreveable/log15 v0.0.0-20180818164646-67afb5ed74ec
+	github.com/alexflint/go-filemutex v1.3.0
+	github.com/hanwen/go-fuse/v2 v2.10.1
+	github.com/inconshreveable/log15/v3 v3.2.1
 	github.com/jpillora/backoff v1.0.0
-	github.com/json-iterator/go v1.1.11 // indirect
-	github.com/klauspost/cpuid/v2 v2.0.8 // indirect
-	github.com/mattn/go-colorable v0.1.4 // indirect
-	github.com/mattn/go-isatty v0.0.10 // indirect
-	github.com/minio/md5-simd v1.1.2 // indirect
-	github.com/minio/minio-go/v7 v7.0.12
-	github.com/minio/sha256-simd v1.0.0 // indirect
+	github.com/minio/minio-go/v7 v7.2.0
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/rs/xid v1.3.0 // indirect
-	github.com/sb10/l15h v0.0.0-20170510122137-64c488bf8e22
-	github.com/smartystreets/assertions v1.0.1 // indirect
-	github.com/smartystreets/goconvey v1.6.4
-	golang.org/x/crypto v0.0.0-20210711020723-a769d52b0f97 // indirect
-	golang.org/x/net v0.0.0-20210614182718-04defd469f4e // indirect
-	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c // indirect
-	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
-	gopkg.in/ini.v1 v1.62.0 // indirect
+	github.com/sb10/l15h/v2 v2.0.0
+	github.com/smartystreets/goconvey v1.8.1
+	gopkg.in/ini.v1 v1.67.3
 )
 
-replace github.com/hanwen/go-fuse/v2 => github.com/sb10/go-fuse/v2 v2.0.3-0.20191025142439-7d7db5160cb6
+require (
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/gopherjs/gopherjs v1.20.2 // indirect
+	github.com/jtolds/gls v4.20.0+incompatible // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/klauspost/crc32 v1.3.0 // indirect
+	github.com/minio/crc64nvme v1.1.1 // indirect
+	github.com/minio/md5-simd v1.1.2 // indirect
+	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/rs/xid v1.6.0 // indirect
+	github.com/smarty/assertions v1.16.0 // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
+	github.com/zeebo/xxh3 v1.1.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/term v0.44.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+)
 
-go 1.13
+go 1.26.3

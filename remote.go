@@ -33,7 +33,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 	"github.com/jpillora/backoff"
 	"github.com/mitchellh/go-homedir"
 )

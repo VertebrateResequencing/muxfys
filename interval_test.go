@@ -466,10 +466,15 @@ func TestIntervals(t *testing.T) {
 		doneSwaps := 0
 		swapped := make(map[int]bool)
 		for {
-			swap := rand.Intn(len(inputs))
+			swap := rand.Intn(len(inputs) - 1)
 			if _, done := swapped[swap]; done {
 				continue
 			}
+
+			if _, done := swapped[swap+1]; done {
+				continue
+			}
+
 			inputs[swap], inputs[swap+1] = inputs[swap+1], inputs[swap]
 			exepectedNew[swap], exepectedNew[swap+1] = exepectedNew[swap+1], exepectedNew[swap]
 			swapped[swap] = true

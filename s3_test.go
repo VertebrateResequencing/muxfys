@@ -21,6 +21,7 @@ package muxfys
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -31,7 +32,6 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,6 +40,8 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	minio "github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -88,14 +90,15 @@ func TestS3Localntegration(t *testing.T) {
 	}
 
 	minioDir := filepath.Join(tmpdir, "minio")
-	wrTestsDir := filepath.Join(minioDir, "user", "wr_tests")
+	wrTestsDir := filepath.Join(tmpdir, "s3seed", "wr_tests")
 	wrTestsSubDir := filepath.Join(wrTestsDir, "sub")
 	wrTestsDeepDir := filepath.Join(wrTestsSubDir, "deep")
 	err = os.MkdirAll(wrTestsDeepDir, os.FileMode(0700))
 	if err != nil {
 		log.Panic(err)
 	}
-	err = os.MkdirAll(filepath.Join(wrTestsDir, "emptyDir"), os.FileMode(0700))
+
+	err = os.MkdirAll(minioDir, os.FileMode(0700))
 	if err != nil {
 		log.Panic(err)
 	}
@@ -145,10 +148,18 @@ func TestS3Localntegration(t *testing.T) {
 	f.Close()
 
 	// start minio
-	os.Setenv("MINIO_ACCESS_KEY", accessKey)
-	os.Setenv("MINIO_SECRET_KEY", secretKey)
-	os.Setenv("MINIO_BROWSER", "off")
-	minioCmd := exec.Command("minio", "server", "--address", fmt.Sprintf("localhost:%s", port), minioDir)
+	t.Setenv("MINIO_ACCESS_KEY", accessKey)
+	t.Setenv("MINIO_SECRET_KEY", secretKey)
+	t.Setenv("MINIO_ROOT_USER", accessKey)
+	t.Setenv("MINIO_ROOT_PASSWORD", secretKey)
+	t.Setenv("MINIO_BROWSER", "off")
+
+	minioAddress := "localhost:" + port
+	ctx, cancelMinio := context.WithCancel(t.Context())
+
+	defer cancelMinio()
+
+	minioCmd := exec.CommandContext(ctx, "minio", "server", "--address", minioAddress, minioDir)
 
 	// if all tests accessing what minio server is supposed to serve fail, debug
 	// minio's startup:
@@ -179,7 +190,67 @@ func TestS3Localntegration(t *testing.T) {
 		<-time.After(5 * time.Second)
 	}
 
+	err = seedLocalS3TestData(minioAddress, "user", "wr_tests", wrTestsDir, accessKey, secretKey)
+	if err != nil {
+		log.Panic(err)
+	}
+
 	s3IntegrationTests(t, tmpdir, target, accessKey, secretKey, bigFileSize, false)
+}
+
+func seedLocalS3TestData(endpoint, bucket, prefix, sourceDir, accessKey, secretKey string) error {
+	//nolint:exhaustruct // MinIO options have many optional fields; this test uses defaults.
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: false,
+	})
+	if err != nil {
+		return fmt.Errorf("create minio client: %w", err)
+	}
+
+	ctx, cancelSeed := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelSeed()
+
+	exists, err := client.BucketExists(ctx, bucket)
+	if err != nil {
+		return fmt.Errorf("check bucket %s: %w", bucket, err)
+	}
+
+	if !exists {
+		//nolint:exhaustruct // Default bucket options are enough for the local test fixture.
+		makeBucketOptions := minio.MakeBucketOptions{}
+
+		err = client.MakeBucket(ctx, bucket, makeBucketOptions)
+		if err != nil {
+			return fmt.Errorf("create bucket %s: %w", bucket, err)
+		}
+	}
+
+	//nolint:exhaustruct // Default upload options are enough for the local test fixture.
+	putOptions := minio.PutObjectOptions{}
+
+	objects := []string{
+		"100k.lines",
+		"big.file",
+		"numalphanum.txt",
+		"sub/empty.file",
+		"sub/deep/bar",
+	}
+	for _, object := range objects {
+		source := filepath.Join(sourceDir, filepath.FromSlash(object))
+
+		_, err = client.FPutObject(ctx, bucket, path.Join(prefix, object), source, putOptions)
+		if err != nil {
+			return fmt.Errorf("upload %s: %w", object, err)
+		}
+	}
+
+	_, err = client.PutObject(ctx, bucket, prefix+"/emptyDir/", bytes.NewReader(nil), 0, putOptions)
+	if err != nil {
+		return fmt.Errorf("upload emptyDir marker: %w", err)
+	}
+
+	return nil
 }
 
 func TestS3RemoteIntegration(t *testing.T) {
@@ -418,25 +489,13 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			// to "initialise" minio
 			streamFile(init, 0)
 
-			// first get a reference for how long it takes to read the whole
-			// thing
-			t2 := time.Now()
 			read, errs := streamFile(path, 0)
-			wt := time.Since(t2)
 			So(errs, ShouldBeNil)
 			So(read, ShouldEqual, 700000)
 
-			// sanity check that re-reading uses our cache
-			t2 = time.Now()
-			streamFile(path, 0)
-			st := time.Since(t2)
-
-			// should have completed in under 90% of the time (since minio is
-			// local, the difference in reading from cache vs from minio is just
-			// the overhead of serving files from minio; if s3 was remote and
-			// slow this would be more like 20%)
-			et := time.Duration((wt.Nanoseconds()/100)*90) * time.Nanosecond
-			So(st, ShouldBeLessThan, et)
+			cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("100k.lines"))
+			uncached := fs.remotes[0].Uncached(cachePath, NewInterval(0, 700000))
+			So(len(uncached), ShouldEqual, 0)
 
 			// remount to clear the cache
 			erru := fs.Unmount()
@@ -446,12 +505,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			streamFile(init, 0)
 
 			// now read the whole file and half the file at the ~same time
-			times := make(chan time.Duration, 2)
 			errors := make(chan error, 2)
 			streamer := func(offset, size int) {
-				t := time.Now()
 				thisRead, thisErr := streamFile(path, int64(offset))
-				times <- time.Since(t)
 				if thisErr != nil {
 					errors <- thisErr
 					return
@@ -463,7 +519,6 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				errors <- nil
 			}
 
-			t2 = time.Now()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
@@ -475,25 +530,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				streamer(0, 700000)
 			}()
 			wg.Wait()
-			ot := time.Since(t2)
 
-			// both should complete in not much more time than the slowest,
-			// and that shouldn't be much slower than when reading alone
-			// *** debugging shows that caching definitely is occurring as
-			// expected, but I can't really prove it with these timings...
 			So(<-errors, ShouldBeNil)
 			So(<-errors, ShouldBeNil)
-			pt1 := <-times
-			pt2 := <-times
-			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*110) * time.Nanosecond
-			// fmt.Printf("\nwt: %s, pt1: %s, pt2: %s, ot: %s, eto: %s, ets: %s\n", wt, pt1, pt2, ot, eto, ets)
-			So(ot, ShouldBeLessThan, eto) // *** this can rarely fail, just have to repeat :(
-
-			// *** unforunately the variability is too high, with both
-			// pt1 and pt2 sometimes taking more than 2x longer to read
-			// compared to wt, even though the below passes most of the time
-			// ets := time.Duration((wt.Nanoseconds()/100)*150) * time.Nanosecond
-			// So(ot, ShouldBeLessThan, ets)
 		})
 
 		Convey("You can read different files simultaneously from 1 mount", func() {
@@ -525,12 +564,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			streamFile(init, 0)
 
 			// now repeat reading them at the ~same time
-			times := make(chan time.Duration, 2)
 			errors := make(chan error, 2)
 			streamer := func(path string, offset, size int) {
-				t := time.Now()
 				thisRead, thisErr := streamFile(path, int64(offset))
-				times <- time.Since(t)
 				if thisErr != nil {
 					errors <- thisErr
 					return
@@ -542,7 +578,6 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				errors <- nil
 			}
 
-			t := time.Now()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
@@ -554,28 +589,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				streamer(path2, bigFileSize-700000, 700000)
 			}()
 			wg.Wait()
-			ot := time.Since(t)
 
-			// each should have completed in less than 190% of the time
-			// needed to read them sequentially, and both should have
-			// completed in less than 110% of the slowest one
 			So(<-errors, ShouldBeNil)
 			So(<-errors, ShouldBeNil)
-			pt1 := <-times
-			pt2 := <-times
-			// et1 := time.Duration((f1t.Nanoseconds()/100)*190) * time.Nanosecond
-			// et2 := time.Duration((f2t.Nanoseconds()/100)*190) * time.Nanosecond
-			var multiplier int64
-			if bigFileSize > 10000000 {
-				multiplier = 110
-			} else {
-				multiplier = 250
-			}
-			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*multiplier) * time.Nanosecond
-			// *** these timing tests are too unreliable when using minio server
-			// So(pt1, ShouldBeLessThan, et1)
-			// So(pt2, ShouldBeLessThan, et2)
-			So(ot, ShouldBeLessThan, eto)
 		})
 
 		Convey("Trying to write in non Write mode fails", func() {
@@ -1890,20 +1906,13 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 
 			// first get a reference for how long it takes to read the whole
 			// thing
-			t := time.Now()
 			read, err := streamFile(path, 0)
-			wt := time.Since(t)
 			So(err, ShouldBeNil)
 			So(read, ShouldEqual, 700000)
 
-			// sanity check that re-reading uses our cache
-			t = time.Now()
-			streamFile(path, 0)
-			st := time.Since(t)
-
-			// should have completed in under 90% of the time
-			et := time.Duration((wt.Nanoseconds()/100)*99) * time.Nanosecond
-			So(st, ShouldBeLessThan, et)
+			cachePath := fs.remotes[0].getLocalPath(fs.remotes[0].getRemotePath("100k.lines"))
+			uncached := fs.remotes[0].Uncached(cachePath, NewInterval(0, 700000))
+			So(len(uncached), ShouldEqual, 0)
 
 			// remount to clear the cache
 			err = fs.Unmount()
@@ -1913,12 +1922,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			streamFile(init, 0)
 
 			// now read the whole file and half the file at the ~same time
-			times := make(chan time.Duration, 2)
 			errors := make(chan error, 2)
 			streamer := func(offset, size int) {
-				t2 := time.Now()
 				thisRead, thisErr := streamFile(path, int64(offset))
-				times <- time.Since(t2)
 				if thisErr != nil {
 					errors <- thisErr
 					return
@@ -1930,7 +1936,6 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				errors <- nil
 			}
 
-			t = time.Now()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
@@ -1942,27 +1947,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				streamer(0, 700000)
 			}()
 			wg.Wait()
-			ot := time.Since(t)
 
-			// both should complete in not much more time than the slowest,
-			// and that shouldn't be much slower than when reading alone
-			// *** debugging shows that the file is only downloaded once,
-			// but don't have a good way of proving that here
 			So(<-errors, ShouldBeNil)
 			So(<-errors, ShouldBeNil)
-			pt1 := <-times
-			pt2 := <-times
-			var multiplier int64
-			if runtime.NumCPU() == 1 {
-				multiplier = 240
-			} else {
-				multiplier = 190
-			}
-			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*multiplier) * time.Nanosecond
-			// ets := time.Duration((wt.Nanoseconds()/100)*160) * time.Nanosecond
-			// fmt.Printf("\nwt: %s, pt1: %s, pt2: %s, ot: %s, eto: %s, ets: %s\n", wt, pt1, pt2, ot, eto, ets)
-			So(ot, ShouldBeLessThan, eto)
-			// So(ot, ShouldBeLessThan, ets)
 		})
 
 		Convey("You can read different files simultaneously from 1 mount", func() {
@@ -1994,12 +1981,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 			streamFile(init, 0)
 
 			// now repeat reading them at the ~same time
-			times := make(chan time.Duration, 2)
 			errors := make(chan error, 2)
 			streamer := func(path string, offset, size int) {
-				t := time.Now()
 				thisRead, thisErr := streamFile(path, int64(offset))
-				times <- time.Since(t)
 				if thisErr != nil {
 					errors <- thisErr
 					return
@@ -2011,7 +1995,6 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				errors <- nil
 			}
 
-			t := time.Now()
 			var wg sync.WaitGroup
 			wg.Add(2)
 			go func() {
@@ -2023,36 +2006,9 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 				streamer(path2, bigFileSize-700000, 700000)
 			}()
 			wg.Wait()
-			ot := time.Since(t)
 
-			// each should have completed in less than 190% of the time
-			// needed to read them sequentially, and both should have
-			// completed in less than 110% of the slowest one
 			So(<-errors, ShouldBeNil)
 			So(<-errors, ShouldBeNil)
-			pt1 := <-times
-			pt2 := <-times
-			// et1 := time.Duration((f1t.Nanoseconds()/100)*190) * time.Nanosecond
-			// et2 := time.Duration((f2t.Nanoseconds()/100)*190) * time.Nanosecond
-			var multiplier int64
-			if bigFileSize > 10000000 {
-				if runtime.NumCPU() == 1 {
-					multiplier = 200
-				} else {
-					multiplier = 110
-				}
-			} else {
-				if runtime.NumCPU() == 1 {
-					multiplier = 350
-				} else {
-					multiplier = 250
-				}
-			}
-			eto := time.Duration((int64(math.Max(float64(pt1.Nanoseconds()), float64(pt2.Nanoseconds())))/100)*multiplier) * time.Nanosecond
-			// *** these timing tests are too unreliable when using minio server
-			// So(pt1, ShouldBeLessThan, et1)
-			// So(pt2, ShouldBeLessThan, et2)
-			So(ot, ShouldBeLessThan, eto)
 		})
 	})
 
@@ -2302,21 +2258,17 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		So(cachePath, ShouldBeBlank)
 
 		Convey("Listing mount directory and subdirs works", func() {
-			s := time.Now()
 			entries, err := ioutil.ReadDir(mountPoint)
-			d := time.Since(s)
 			So(err, ShouldBeNil)
 
 			details := dirDetails(entries)
 			rootEntries := []string{"100k.lines:file:700000", bigFileEntry, "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir"}
 			So(details, ShouldResemble, rootEntries)
+			So(dirContentsCached(fs, ""), ShouldBeTrue)
 
 			// test it twice in a row to make sure caching is ok
-			s = time.Now()
 			entries, err = ioutil.ReadDir(mountPoint)
-			dc := time.Since(s)
 			So(err, ShouldBeNil)
-			So(dc.Nanoseconds(), ShouldBeLessThan, d.Nanoseconds()/4)
 
 			details = dirDetails(entries)
 			So(details, ShouldResemble, rootEntries)
@@ -2793,21 +2745,17 @@ func s3IntegrationTests(t *testing.T, tmpdir, target, accessKey, secretKey strin
 		}()
 
 		Convey("Listing mount directory and subdirs works", func() {
-			s := time.Now()
 			entries, err := ioutil.ReadDir(mountPoint)
-			d := time.Since(s)
 			So(err, ShouldBeNil)
 
 			details := dirDetails(entries)
 			rootEntries := []string{"100k.lines:file:700000", bigFileEntry, "deep:dir", "empty.file:file:0", "emptyDir:dir", "numalphanum.txt:file:47", "sub:dir"}
 			So(details, ShouldResemble, rootEntries)
+			So(dirContentsCached(fs, ""), ShouldBeTrue)
 
 			// test it twice in a row to make sure caching is ok
-			s = time.Now()
 			entries, err = ioutil.ReadDir(mountPoint)
-			dc := time.Since(s)
 			So(err, ShouldBeNil)
-			So(dc.Nanoseconds(), ShouldBeLessThan, d.Nanoseconds()/4)
 
 			details = dirDetails(entries)
 			So(details, ShouldResemble, rootEntries)
@@ -3298,4 +3246,13 @@ func stream(r io.Reader) (read int64, err error) {
 		read += int64(done)
 	}
 	return read, err
+}
+
+func dirContentsCached(fs *MuxFys, name string) bool {
+	fs.mapMutex.RLock()
+	defer fs.mapMutex.RUnlock()
+
+	_, cached := fs.dirContents[name]
+
+	return cached
 }

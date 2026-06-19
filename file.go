@@ -31,7 +31,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
-	"github.com/inconshreveable/log15"
+	"github.com/inconshreveable/log15/v3"
 )
 
 // remoteFile struct is muxfys' implementation of pathfs.File for reading data
@@ -365,7 +365,9 @@ func newCachedFile(r *remote, remotePath, localPath string, attr *fuse.Attr, fla
 }
 
 func (f *cachedFile) makeLoopback() {
-	localFile, err := os.OpenFile(f.localPath, f.flags, os.FileMode(fileMode))
+	openFlags := f.flags &^ os.O_APPEND
+
+	localFile, err := os.OpenFile(f.localPath, openFlags, os.FileMode(fileMode))
 	if err != nil {
 		f.Error("Could not open file", "err", err)
 	}
@@ -387,6 +389,18 @@ func (f *cachedFile) InnerFile() nodefs.File {
 // Write passes the real work to our InnerFile(), also updating our cached
 // attr.
 func (f *cachedFile) Write(data []byte, offset int64) (uint32, fuse.Status) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	if f.flags&os.O_APPEND != 0 {
+		const maxInt64 = uint64(1<<63 - 1)
+		if f.attr.Size > maxInt64 {
+			return uint32(0), fuse.EIO
+		}
+
+		offset = int64(f.attr.Size)
+	}
+
 	n, s := f.InnerFile().Write(data, offset)
 	size := uint64(offset) + uint64(n)
 	if size > f.attr.Size {

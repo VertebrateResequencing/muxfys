@@ -37,10 +37,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/go-ini/ini"
 	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/mitchellh/go-homedir"
+	"gopkg.in/ini.v1"
 )
 
 const (
