@@ -120,6 +120,7 @@ RemoteConfig.
 package muxfys
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -159,6 +160,11 @@ var (
 	exitFunc         = os.Exit
 	deathSignals     = []os.Signal{os.Interrupt, syscall.SIGTERM}
 )
+
+// errKeptCache is returned by Unmount() when files failed to upload, and is
+// followed by the path of the cache directory that was kept because it holds
+// their only copy.
+var errKeptCache = errors.New("the un-uploaded data has been left in the cache directory")
 
 func init() {
 	pkgLogger.SetHandler(l15h.ChangeableHandler(logHandlerSetter))
@@ -451,7 +457,13 @@ func (fs *MuxFys) UnmountOnDeath() {
 // bool which if true prevents any uploads.
 //
 // If a remote was not configured with a specific CacheDir but CacheData was
-// true, the CacheDir will be deleted.
+// true, the CacheDir will be deleted. The exception is when files fail to
+// upload: their only copy is the one in the CacheDir, so that CacheDir is kept
+// and the returned error says where it is, leaving you to recover or discard
+// the data yourself.
+//
+// If you supply true to prevent uploads, the CacheDir is always deleted, since
+// preventing uploads means asking for the data to be discarded.
 func (fs *MuxFys) Unmount(doNotUpload ...bool) error {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
@@ -469,21 +481,21 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) error {
 		// <-time.After(10 * time.Second)
 	}
 
+	var keepCache *remote
 	if !(len(doNotUpload) == 1 && doNotUpload[0]) {
 		// upload files that got opened for writing
-		uerr := fs.uploadCreated()
-		if uerr != nil {
-			if err == nil {
-				err = uerr
-			} else {
-				err = fmt.Errorf("%s; %s", err.Error(), uerr.Error())
-			}
+		err = errors.Join(err, fs.uploadCreated())
+
+		keepCache = fs.unuploadedCache()
+		if keepCache != nil {
+			err = errors.Join(err, fmt.Errorf("%w %s", errKeptCache, keepCache.cacheDir))
 		}
 	}
 
-	// delete any cachedirs we created
+	// delete any cachedirs we created, except one holding the only copy of data
+	// that failed to upload
 	for _, remote := range fs.remotes {
-		if remote.cacheIsTmp {
+		if remote.cacheIsTmp && remote != keepCache {
 			errd := remote.deleteCache()
 			if errd != nil {
 				remote.Warn("Unmount cache deletion failed", "err", errd)
@@ -511,6 +523,24 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) error {
 	fs.writeRemote = nil
 
 	return err
+}
+
+// unuploadedCache returns the remote whose cache still holds files that failed
+// to upload, or nil if there are none. Uploads only ever go to fs.writeRemote,
+// so no other remote's cache can hold data that isn't also on a remote.
+func (fs *MuxFys) unuploadedCache() *remote {
+	if fs.writeRemote == nil || !fs.writeRemote.cacheData {
+		return nil
+	}
+
+	fs.mapMutex.Lock()
+	defer fs.mapMutex.Unlock()
+
+	if len(fs.createdFiles) == 0 {
+		return nil
+	}
+
+	return fs.writeRemote
 }
 
 // uploadCreated uploads any files that previously got created. Only functions

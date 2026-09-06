@@ -22,6 +22,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -3255,4 +3256,135 @@ func dirContentsCached(fs *MuxFys, name string) bool {
 	_, cached := fs.dirContents[name]
 
 	return cached
+}
+
+var errSimulatedUpload = errors.New("simulated upload failure")
+
+// uploadFailAccessor wraps a real RemoteAccessor but makes every UploadFile
+// call fail, simulating what happens to a real upload at Unmount() time when
+// credentials expire, a bucket policy changes, or the network partitions.
+// Everything else (listing, opening, deleting) goes to the real remote.
+type uploadFailAccessor struct {
+	RemoteAccessor
+}
+
+func (u *uploadFailAccessor) UploadFile(source, dest, contentType string) error {
+	return errSimulatedUpload
+}
+
+// findMuxfysCacheDir returns the path of the temporary cache directory muxfys
+// created inside the given cache base, or "" if there isn't one.
+func findMuxfysCacheDir(base string) string {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return ""
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".muxfys_cache") {
+			return filepath.Join(base, entry.Name())
+		}
+	}
+
+	return ""
+}
+
+// findFileWithContents returns the path of the first file under root whose
+// contents equal want, or "" if there isn't one.
+func findFileWithContents(root string, want []byte) string {
+	var found string
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || found != "" {
+			return nil //nolint:nilerr
+		}
+
+		b, rerr := os.ReadFile(path)
+		if rerr == nil && bytes.Equal(b, want) {
+			found = path
+		}
+
+		return nil
+	})
+	if err != nil {
+		return ""
+	}
+
+	return found
+}
+
+func TestS3RemoteUnmountUploadFailure(t *testing.T) {
+	// This uses the same real remote as TestS3RemoteIntegration; see its
+	// comment for what MUXFYS_REMOTES3_TARGET must be set to. Credentials come
+	// from ~/.s3cfg via S3ConfigFromEnvironment().
+	target := os.Getenv("MUXFYS_REMOTES3_TARGET")
+	if target == "" {
+		SkipConvey("Without MUXFYS_REMOTES3_TARGET, we'll skip remote S3 unmount tests", t, func() {})
+
+		return
+	}
+
+	tmpdir, err := os.MkdirTemp("", "muxfys_testing")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+
+	if err = os.Chdir(tmpdir); err != nil {
+		log.Panic(err)
+	}
+
+	Convey("Given a writeable CacheData mount whose upload will fail", t, func() {
+		// a unique remote subdir, so we can never touch anything else
+		u, erru := url.Parse(target)
+		So(erru, ShouldBeNil)
+
+		subPath := fmt.Sprintf("%s/unmountfail.%d.%d", strings.TrimPrefix(u.Path, "/"), os.Getpid(), time.Now().UnixNano())
+
+		s3cfg, errc := S3ConfigFromEnvironment("", subPath)
+		So(errc, ShouldBeNil)
+
+		accessor, errn := NewS3Accessor(s3cfg)
+		So(errn, ShouldBeNil)
+
+		mountPoint := filepath.Join(tmpdir, "mount")
+		cacheBase := filepath.Join(tmpdir, "cacheBase")
+		So(os.MkdirAll(cacheBase, 0700), ShouldBeNil)
+
+		fs, errf := New(&Config{Mount: mountPoint, CacheBase: cacheBase})
+		So(errf, ShouldBeNil)
+
+		errm := fs.Mount(&RemoteConfig{
+			Accessor:  &uploadFailAccessor{accessor},
+			CacheData: true,
+			Write:     true,
+		})
+		So(errm, ShouldBeNil)
+
+		unmounted := false
+		defer func() {
+			if !unmounted {
+				fs.Unmount(true) //nolint:errcheck
+			}
+		}()
+
+		contents := []byte("critical job output that only exists in the cache\n")
+		So(os.WriteFile(filepath.Join(mountPoint, "output.file"), contents, 0644), ShouldBeNil)
+
+		cacheDir := findMuxfysCacheDir(cacheBase)
+		So(cacheDir, ShouldNotEqual, "")
+
+		Convey("Unmount() reports the failure and does not destroy the un-uploaded data", func() {
+			errUnmount := fs.Unmount()
+			unmounted = true
+
+			So(errUnmount, ShouldNotBeNil)
+
+			// the data must still exist somewhere on local disk
+			So(findFileWithContents(cacheBase, contents), ShouldNotEqual, "")
+
+			// and the caller must be told where it is
+			So(errUnmount.Error(), ShouldContainSubstring, cacheDir)
+		})
+	})
 }
