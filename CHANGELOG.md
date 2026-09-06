@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
-## [Unreleased]
+## [5.1.0] - 2026-09-06
 ### Changed
 - Updated dependencies, including go-fuse v2.10.1 -> v2.11.0 and minio-go
   v7.2.0 -> v7.3.0, plus indirect updates.
@@ -20,6 +20,28 @@ project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 - Unmount() no longer deletes a temporary cache directory that holds files
   which failed to upload; the returned error now says where that directory is.
+
+
+## [5.0.0] - 2026-06-19
+### Changed
+- Backwards incompatible: the module path is now
+  github.com/VertebrateResequencing/muxfys/v5.
+- Backwards incompatible: SetLogHandler() now takes a
+  github.com/inconshreveable/log15/v3 Handler. The type name is unchanged, so
+  callers still passing a github.com/inconshreveable/log15 Handler fail to
+  compile rather than misbehaving quietly.
+- No longer builds against a fork of go-fuse. The replace directive pinning
+  github.com/hanwen/go-fuse/v2 to github.com/sb10/go-fuse/v2 was dropped, and
+  muxfys now uses upstream go-fuse v2.10.1 (the fork was at v2.0.3).
+- Dependencies updated: minio-go v7.0.12 -> v7.2.0, go-filemutex v1.0.0 ->
+  v1.3.0, goconvey v1.6.4 -> v1.8.1, sb10/l15h -> sb10/l15h/v2, and
+  github.com/go-ini/ini -> gopkg.in/ini.v1 v1.67.3.
+- Caller information is now added to logs per level instead of to every
+  record: debug, warn and error records get a caller field, crit records get a
+  stack, and info records get neither.
+- Apart from the log15 import path, the exported API is unchanged from 4.0.3:
+  the same 159 exported declarations, none added and none removed.
+- CI moved from Travis to GitHub Actions, and a Makefile was added.
 
 
 ## [4.0.3] - 2021-07-16
