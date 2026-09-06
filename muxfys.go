@@ -484,11 +484,11 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) error {
 	var keepCache *remote
 	if !(len(doNotUpload) == 1 && doNotUpload[0]) {
 		// upload files that got opened for writing
-		err = combineErrors(err, fs.uploadCreated())
+		err = errors.Join(err, fs.uploadCreated())
 
 		keepCache = fs.unuploadedCache()
 		if keepCache != nil {
-			err = combineErrors(err, fmt.Errorf("%w %s", errKeptCache, keepCache.cacheDir))
+			err = errors.Join(err, fmt.Errorf("%w %s", errKeptCache, keepCache.cacheDir))
 		}
 	}
 
@@ -523,18 +523,6 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) error {
 	fs.writeRemote = nil
 
 	return err
-}
-
-// combineErrors joins two errors into one, ignoring nil ones.
-func combineErrors(a, b error) error {
-	switch {
-	case a == nil:
-		return b
-	case b == nil:
-		return a
-	default:
-		return fmt.Errorf("%w; %w", a, b)
-	}
 }
 
 // unuploadedCache returns the remote whose cache still holds files that failed

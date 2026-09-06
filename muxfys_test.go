@@ -532,8 +532,9 @@ func TestMuxFys(t *testing.T) {
 
 				err = fs.Unmount()
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "failed to upload 1 files; the un-uploaded "+
+				So(err.Error(), ShouldEqual, "failed to upload 1 files\nthe un-uploaded "+
 					"data has been left in the cache directory "+cacheDir)
+				So(errors.Is(err, errKeptCache), ShouldBeTrue)
 
 				Convey("and the un-uploaded data is still in the cache", func() {
 					_, errs := os.Stat(filepath.Join(cacheDir, sourcePoint, "created.file"))
