@@ -6,6 +6,17 @@ project adheres to [Semantic Versioning](http://semver.org/).
 
 
 ## [Unreleased]
+### Changed
+- Updated dependencies, including go-fuse v2.10.1 -> v2.11.0 and minio-go
+  v7.2.0 -> v7.3.0, plus indirect updates.
+- Setting or removing an extended attribute on a mount now fails with ENOSYS
+  ("Function not implemented"). Previously the attribute was accepted and
+  then silently discarded, since muxfys has never stored xattrs; go-fuse
+  v2.11.0 extends its DisableXAttrs option to cover setxattr and removexattr,
+  so muxfys is no longer asked.
+- As a result, rsync -X onto a mount now exits 23 where it used to exit 0.
+  File data is unaffected, and cp -a, tar --xattrs and rsync -a still exit 0.
+
 ### Fixed
 - Unmount() no longer deletes a temporary cache directory that holds files
   which failed to upload; the returned error now says where that directory is.
