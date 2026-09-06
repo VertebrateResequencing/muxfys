@@ -525,7 +525,7 @@ func (fs *MuxFys) Unmount(doNotUpload ...bool) error {
 	return err
 }
 
-// combineErrors joins two errors in to one, ignoring nil ones.
+// combineErrors joins two errors into one, ignoring nil ones.
 func combineErrors(a, b error) error {
 	switch {
 	case a == nil:
