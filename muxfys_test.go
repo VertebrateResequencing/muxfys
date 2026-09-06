@@ -492,6 +492,7 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 				_, err = os.Stat(sourceFile2)
 				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
 
 				Convey("SetLogHandler() lets you log events", func() {
 					recs := make(chan log15.Record, 10)
@@ -519,15 +520,25 @@ func TestMuxFys(t *testing.T) {
 				So(err, ShouldBeNil)
 				f.Close()
 
+				cacheDir := findMuxfysCacheDir(cacheBase)
+				So(cacheDir, ShouldNotEqual, "")
+
 				uploadFail = true
 				defer func() {
 					uploadFail = false
 				}()
 				defer os.Remove(sourceFile)
+				defer os.RemoveAll(cacheDir)
 
 				err = fs.Unmount()
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "failed to upload 1 files")
+				So(err.Error(), ShouldEqual, "failed to upload 1 files; the un-uploaded "+
+					"data has been left in the cache directory "+cacheDir)
+
+				Convey("and the un-uploaded data is still in the cache", func() {
+					_, errs := os.Stat(filepath.Join(cacheDir, sourcePoint, "created.file"))
+					So(errs, ShouldBeNil)
+				})
 
 				Convey("Logs() tells you what happened", func() {
 					logs := fs.Logs()
@@ -544,6 +555,56 @@ func TestMuxFys(t *testing.T) {
 					So(logs[1], ShouldContainSubstring, `err="upload failed"`)
 					So(logs[1], ShouldContainSubstring, "caller=remote.go")
 				})
+			})
+
+			Convey("Unmounting with uploads prevented deletes the cache", func() {
+				f, err := os.OpenFile(filepath.Join(explicitMount, "created.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(err, ShouldBeNil)
+				f.Close()
+
+				err = fs.Unmount(true)
+				So(err, ShouldBeNil)
+				So(checkEmpty(cacheBase), ShouldBeTrue)
+			})
+
+			Convey("Only the cache of the remote that failed to upload is kept", func() {
+				err := fs.Unmount()
+				So(err, ShouldBeNil)
+
+				readConfig := &RemoteConfig{
+					Accessor:  accessorNonExistent,
+					CacheData: true,
+				}
+				err = fs.Mount(readConfig, remoteConfig)
+				So(err, ShouldBeNil)
+
+				entries, errd := ioutil.ReadDir(cacheBase)
+				So(errd, ShouldBeNil)
+				So(len(entries), ShouldEqual, 2)
+
+				sourceFile := filepath.Join(sourcePoint, "created.file")
+				f, erro := os.OpenFile(filepath.Join(explicitMount, "created.file"), os.O_RDWR|os.O_CREATE, 0666)
+				So(erro, ShouldBeNil)
+				f.Close()
+
+				uploadFail = true
+				defer func() {
+					uploadFail = false
+				}()
+				defer os.Remove(sourceFile)
+
+				err = fs.Unmount()
+				So(err, ShouldNotBeNil)
+
+				entries, errd = ioutil.ReadDir(cacheBase)
+				So(errd, ShouldBeNil)
+				So(len(entries), ShouldEqual, 1)
+
+				kept := filepath.Join(cacheBase, entries[0].Name())
+				defer os.RemoveAll(kept)
+
+				So(err.Error(), ShouldContainSubstring, kept)
+				So(checkEmpty(kept), ShouldBeFalse)
 			})
 
 			Convey("We try the desired number of times to access bad remotes", func() {
