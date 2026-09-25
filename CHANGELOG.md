@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [Unreleased]
+### Fixed
+- A process that mounts can no longer deadlock forever when it starts a child
+  process whose working directory is the mount point. The child's chdir used to
+  send an access request that only the parent could answer, which it could not
+  do while stopping the world for garbage collection. Access now returns ENOSYS,
+  which the kernel treats as permission granted, and Mount() makes the first
+  access check itself so the kernel never asks again. Permissions are unchanged:
+  access checks were already always granted.
+- A working directory in a subdirectory of the mount point is still unsafe; see
+  the Mount() documentation.
+
+
 ## [5.1.0] - 2026-09-06
 ### Changed
 - Updated dependencies, including go-fuse v2.10.1 -> v2.11.0 and minio-go

@@ -151,6 +151,9 @@ const (
 	symlinkSize = uint64(7)
 
 	maxLogStackDepth = 32
+
+	// accessExecute is X_OK for access(2), the check a chdir makes.
+	accessExecute = 1
 )
 
 //nolint:gochecknoglobals // Package-level logger state backs the public SetLogHandler API.
@@ -316,6 +319,15 @@ func New(config *Config) (*MuxFys, error) {
 // contents will in in turn show the contents of all those directories. If
 // multiple remotes have a file with the same name in the same directory, reads
 // will come from the first remote you configured that has that file.
+//
+// The process that mounts can safely start child processes (eg. with
+// exec.Cmd) whose working directory is the mount point itself. A working
+// directory in a subdirectory of the mount point is not safe: Go forks with
+// CLONE_VFORK, and if the child's chdir needs a FUSE request answered while
+// the garbage collector is stopping the world, no goroutine can serve the
+// request and the process deadlocks forever. The mount point is safe because
+// Mount() makes an access(2) on it before returning, after which the kernel
+// sends no more requests for a chdir into it.
 func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 	if len(rcs) == 0 {
 		return fmt.Errorf("at least one RemoteConfig must be supplied")
@@ -379,6 +391,13 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 	err = fs.server.WaitMount()
 	if err != nil {
 		return err
+	}
+
+	// Our Access() returns ENOSYS, so the kernel stops asking after this first
+	// access(2), made here where nothing can be forking into the mount.
+	errA := syscall.Access(fs.mountPoint, accessExecute)
+	if errA != nil {
+		fs.Warn("Mount access check failed", "err", errA)
 	}
 
 	fs.mounted = true

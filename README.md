@@ -178,6 +178,15 @@ file read downloading the whole remote file to cache it, which can be wasteful
 if you only need to read a small part of a large file. (But this is the only way
 that muxfys can coordinate the cache amongst independent processes.)
 
+If the process that mounts also starts child processes (eg. with Go's
+`exec.Cmd`) whose working directory is on the mount, make that working directory
+the mount point itself, not a subdirectory of it. Go forks with `CLONE_VFORK`,
+and if the child's `chdir` needs a FUSE request answered while the garbage
+collector is stopping the world, nothing can serve the request and the process
+deadlocks forever. `Mount()` makes sure a `chdir` into the mount point never
+needs a request, but a subdirectory would additionally need long entry and
+attribute timeouts, which muxfys does not use.
+
 # Usage
 
 ```go
