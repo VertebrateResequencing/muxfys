@@ -142,6 +142,7 @@ import (
 	"github.com/inconshreveable/log15/v3"
 	"github.com/mitchellh/go-homedir"
 	"github.com/sb10/l15h/v2"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -151,9 +152,6 @@ const (
 	symlinkSize = uint64(7)
 
 	maxLogStackDepth = 32
-
-	// accessExecute is X_OK for access(2), the check a chdir makes.
-	accessExecute = 1
 )
 
 //nolint:gochecknoglobals // Package-level logger state backs the public SetLogHandler API.
@@ -395,7 +393,7 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 
 	// Our Access() returns ENOSYS, so the kernel stops asking after this first
 	// access(2), made here where nothing can be forking into the mount.
-	errA := syscall.Access(fs.mountPoint, accessExecute)
+	errA := unix.Access(fs.mountPoint, unix.X_OK)
 	if errA != nil {
 		fs.Warn("Mount access check failed", "err", errA)
 	}

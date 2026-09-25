@@ -34,6 +34,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -46,7 +47,6 @@ const (
 	forkDoneMsg     = "done"
 	fuseFsType      = "fuse.MuxFys"
 	fusectlPrefix   = "/sys/fs/fuse/connections/"
-	accessRWX       = 7
 )
 
 var errForkChild = errors.New("fork child failed")
@@ -155,7 +155,7 @@ func TestMountAccess(t *testing.T) {
 
 		Convey("access(2) grants every mode on its directories and files", func() {
 			for _, path := range []string{mnt, filepath.Join(mnt, "read.file"), created} {
-				So(syscall.Access(path, accessRWX), ShouldBeNil)
+				So(unix.Access(path, unix.R_OK|unix.W_OK|unix.X_OK), ShouldBeNil)
 			}
 		})
 

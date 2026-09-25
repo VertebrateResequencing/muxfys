@@ -22,3 +22,8 @@
   - No red test: making it red needs a child that SIGKILL plus a fusectl abort can't reap, which can't be arranged. Instead, the wedge path was exercised with the fix removed (`filesystem.go` and `muxfys.go` from `8fafdc8`). All 3 trials wedged and every child was reaped within the bound. The only failing assertion was the wedge count, and no mount or fusectl connection was left afterwards.
 
 - [x] PRRT_kwDOBWq4W86mGc1p, .docs/bugfixes/260925-vfork-chdir-wedge.md:2: the pre-fix behaviour was described in the present tense, as if Access still returned fuse.OK. The first item's summary and cause lines now use the past tense ("Access returned fuse.OK"). The rest of that item is dated measurements or already describes the fix. Docs only, so no test.
+
+- [x] PRRT_kwDOBWq4W86mGc19, muxfys.go:156: `Mount()`'s warm-up access passed a hard-coded `accessExecute = 1` rather than a named X_OK. `syscall` has no X_OK on linux, but the module already depended on `golang.org/x/sys` (indirectly).
+  - Fixed: the constant is gone, and `Mount()` now calls `unix.Access(fs.mountPoint, unix.X_OK)`. `TestMountAccess` also uses `unix.R_OK|unix.W_OK|unix.X_OK` in place of its own `accessRWX = 7`. `go mod tidy` moved `golang.org/x/sys v0.47.0` from the indirect to the direct require block, at the same version, so `go.sum` is unchanged.
+  - No new test, because behaviour is unchanged: `TestMountForkChdir` and `TestMountAccess` still pass, and `GOOS=darwin go build .` still compiles.
+  - Gates after all four items: `make lint` 0 issues, `make test` ok, `make race` ok. No mount or fusectl connection was left afterwards.
