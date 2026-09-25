@@ -931,9 +931,17 @@ func (fs *MuxFys) Unlink(name string, context *fuse.Context) fuse.Status {
 	return fuse.OK
 }
 
-// Access is ignored.
+// Access returns ENOSYS, which the kernel takes as permission granted, and as
+// a reason never to send another access request for this mount. Mount() makes
+// the first access(2) itself, so that no later chdir needs a FUSE request
+// answered; see Mount() for why that matters.
+//
+// This relies on muxfys mounting without the default_permissions option.
+// With it, the kernel never calls Access: it checks the mode bits in cached
+// attributes itself, so access checks are no longer always granted, and a
+// chdir can again need a FUSE request (to refresh expired attributes).
 func (fs *MuxFys) Access(name string, mode uint32, context *fuse.Context) fuse.Status {
-	return fuse.OK
+	return fuse.ENOSYS
 }
 
 // Create creates a new file. mode and context are not currently used. When
