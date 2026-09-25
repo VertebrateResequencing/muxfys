@@ -37,15 +37,16 @@ import (
 )
 
 const (
-	forkChildEnv  = "MUXFYS_TEST_FORK_DIR"
-	forkTrials    = 3
-	forkDuration  = time.Second
-	forkStall     = 2 * time.Second
-	forkPoll      = 50 * time.Millisecond
-	forkDoneMsg   = "done"
-	fuseFsType    = "fuse.MuxFys"
-	fusectlPrefix = "/sys/fs/fuse/connections/"
-	accessRWX     = 7
+	forkChildEnv    = "MUXFYS_TEST_FORK_DIR"
+	forkTrials      = 3
+	forkDuration    = time.Second
+	forkStall       = 2 * time.Second
+	forkReapTimeout = 10 * time.Second
+	forkPoll        = 50 * time.Millisecond
+	forkDoneMsg     = "done"
+	fuseFsType      = "fuse.MuxFys"
+	fusectlPrefix   = "/sys/fs/fuse/connections/"
+	accessRWX       = 7
 )
 
 var errForkChild = errors.New("fork child failed")
@@ -231,9 +232,16 @@ func forkTrialWedged(t *testing.T, fusermount string) bool {
 		So(os.WriteFile(fusectlPrefix+conn+"/abort", []byte("1"), 0), ShouldBeNil)
 	}
 
-	<-done
+	reaped := false
+
+	select {
+	case <-done:
+		reaped = true
+	case <-time.After(forkReapTimeout):
+	}
 
 	So(exec.CommandContext(t.Context(), fusermount, "-u", "-z", mnt).Run(), ShouldBeNil)
+	So(reaped, ShouldBeTrue)
 
 	return true
 }
