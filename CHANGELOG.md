@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this
 project adheres to [Semantic Versioning](http://semver.org/).
 
 
-## [Unreleased]
+## [5.1.1] - 2026-09-25
 ### Fixed
 - A process that mounts can no longer deadlock forever when it starts a child
   process whose working directory is the mount point. The child's chdir used to
