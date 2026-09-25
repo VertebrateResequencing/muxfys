@@ -27,3 +27,7 @@
   - Fixed: the constant is gone, and `Mount()` now calls `unix.Access(fs.mountPoint, unix.X_OK)`. `TestMountAccess` also uses `unix.R_OK|unix.W_OK|unix.X_OK` in place of its own `accessRWX = 7`. `go mod tidy` moved `golang.org/x/sys v0.47.0` from the indirect to the direct require block, at the same version, so `go.sum` is unchanged.
   - No new test, because behaviour is unchanged: `TestMountForkChdir` and `TestMountAccess` still pass, and `GOOS=darwin go build .` still compiles.
   - Gates after all four items: `make lint` 0 issues, `make test` ok, `make race` ok. No mount or fusectl connection was left afterwards.
+
+- [x] PRRT_kwDOBWq4W86mGjUZ, filesystem.go:937: the Access comment said the kernel treats ENOSYS as permission granted, without saying that only holds without the `default_permissions` mount option. With that option the kernel never sends FUSE_ACCESS. It checks mode bits from cached attributes itself, so checks are no longer always granted, and a chdir can again need a GETATTR once attributes expire.
+  - Fixed, comments only: the Access doc comment now states the condition and what breaks without it. The `Mount()` doc comment says its "no more requests for a chdir" claim depends on it too. A comment on `mOpts` in `Mount()` warns against adding `default_permissions`, or `IDMappedMount`, which go-fuse v2.11.0 turns into `default_permissions` (fuse/mount_linux.go:96).
+  - muxfys currently sets neither. `make lint` 0 issues, and `TestMountForkChdir` and `TestMountAccess` still pass.

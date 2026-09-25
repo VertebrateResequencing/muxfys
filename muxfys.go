@@ -325,7 +325,8 @@ func New(config *Config) (*MuxFys, error) {
 // the garbage collector is stopping the world, no goroutine can serve the
 // request and the process deadlocks forever. The mount point is safe because
 // Mount() makes an access(2) on it before returning, after which the kernel
-// sends no more requests for a chdir into it.
+// sends no more requests for a chdir into it. That only holds because muxfys
+// mounts without the default_permissions option; see Access().
 func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 	if len(rcs) == 0 {
 		return fmt.Errorf("at least one RemoteConfig must be supplied")
@@ -371,6 +372,8 @@ func (fs *MuxFys) Mount(rcs ...*RemoteConfig) error {
 	pathFsOpts := &pathfs.PathNodeFsOptions{ClientInodes: false} // false means we can't hardlink, but our inodes are stable *** does it matter if they're unstable?
 	pathFs := pathfs.NewPathNodeFs(fs, pathFsOpts)
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
+	// Don't add default_permissions, or IDMappedMount (which implies it), to
+	// these: see Access() for what that would break.
 	mOpts := &fuse.MountOptions{
 		AllowOther:           true,
 		FsName:               "MuxFys",
